@@ -1,0 +1,3 @@
+streamlit>=1.30.0
+pandas>=2.0.0
+# We don't need to install sqlite3, it's included in the Python standard library
