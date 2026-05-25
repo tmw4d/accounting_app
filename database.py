@@ -51,7 +51,7 @@ def init_db():
                     transaction_date TEXT NOT NULL,
                     description TEXT,
                     amount REAL NOT NULL,
-                    transaction_type TEXT NOT NULL, -- Credit, Debit, Accrual
+                    transaction_type TEXT, -- Credit, Debit, Accrual
                     check_number TEXT,
                     daily_posted_balance REAL,      -- Can be NULL
                     running_balance REAL,
@@ -60,7 +60,7 @@ def init_db():
                     source_indicator TEXT NOT NULL, -- 'Manual' or 'Bank'
                     is_deleted INTEGER DEFAULT 0,   -- 0 for active, 1 for deleted
                     notes TEXT,
-                    more_note TEXT,
+                    more_notes TEXT,
                     
                     -- Relational Foreign Keys
                     category_id INTEGER,
