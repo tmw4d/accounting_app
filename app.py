@@ -78,6 +78,7 @@ db.init_db()
 st.sidebar.title("Accounting System")
 page = st.sidebar.radio("Navigate to:", [
     "Dashboard", 
+    "Reconcile Expenses", 
     "Manual Entry", 
     "Import Bank Files", 
     "Configuration"
@@ -102,9 +103,13 @@ if page == "Dashboard":
     from pages import dashboard
     dashboard.render_dashboard_table()
 
+elif page == "Reconcile Expenses":
+    fiscal_year_selector()
+    from pages import reconcile
+    reconcile.render_reconciliation()
 elif page == "Manual Entry":
-    from pages import entries
-    entries.render()
+    from pages import manual_inputs
+    manual_inputs.render()
 elif page == "Import Bank Files":
     from pages import imports
     imports.render()
