@@ -48,8 +48,69 @@ def render_dashboard_table():
     
     # Reorder index so Income is first
     pivot_df = pivot_df.reindex(['Income', 'Expense', 'Total'])
+    pivot_df.index.name = "Flow"
 
     # 5. Display
     st.write("### Financial Breakdown by Program")
-    st.dataframe(pivot_df.style.format("${:,.2f}"))
+    total_col_idx = list(pivot_df.columns).index("Total") if "Total" in pivot_df.columns else None
+    total_row_idx = list(pivot_df.index).index("Total") if "Total" in pivot_df.index else None
+
+    def highlight_totals(data):
+        styles = pd.DataFrame("", index=data.index, columns=data.columns)
+        if "Total" in styles.columns:
+            styles["Total"] = (
+                "background-color: #1f6feb; color: #ffffff; font-weight: 700; "
+                "border-left: 2px solid #ffffff55; border-right: 2px solid #ffffff55;"
+            )
+        if "Total" in styles.index:
+            styles.loc["Total", :] = (
+                "background-color: #238636; color: #ffffff; font-weight: 700; "
+                "border-top: 2px solid #ffffff55; border-bottom: 2px solid #ffffff55;"
+            )
+            if "Total" in styles.columns:
+                styles.loc["Total", "Total"] = (
+                    "background-color: #8250df; color: #ffffff; font-weight: 800; "
+                    "border: 2px solid #ffffff88;"
+                )
+        return styles
+
+    table_styles = [
+        {"selector": "th", "props": [("font-size", "16px"), ("font-weight", "700")]},
+        {"selector": "td", "props": [("font-size", "16px")]},
+    ]
+    if total_col_idx is not None:
+        table_styles.append({
+            "selector": f".col{total_col_idx}",
+            "props": [
+                ("background-color", "#1f6feb"),
+                ("color", "#ffffff"),
+                ("font-weight", "700"),
+            ],
+        })
+    if total_row_idx is not None:
+        table_styles.append({
+            "selector": f".row{total_row_idx}",
+            "props": [
+                ("background-color", "#238636"),
+                ("color", "#ffffff"),
+                ("font-weight", "700"),
+            ],
+        })
+
+    styled_df = (
+        pivot_df.style
+        .format("${:,.0f}")
+        .apply(highlight_totals, axis=None)
+        .set_properties(**{
+            "font-size": "16px",
+            "text-align": "right",
+            "white-space": "nowrap",
+        })
+        .set_table_styles(table_styles)
+    )
+    st.dataframe(
+        styled_df,
+        use_container_width=True,
+        height=180,
+    )
 

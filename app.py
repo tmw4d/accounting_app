@@ -3,6 +3,8 @@ import database as db
 
 import sqlite3
 
+st.set_page_config(page_title="Accounting System", layout="wide")
+
 # Initialize session state immediately when the app starts
 if "selected_fy" not in st.session_state:
     with sqlite3.connect("data/ledger.db") as conn:
@@ -40,6 +42,9 @@ def fiscal_year_selector():
     return st.session_state.selected_fy
 
 def get_dashboard_summary():
+    def as_float(value):
+        return float(value) if value is not None else 0.0
+
     fy_id = st.session_state.selected_fy
     with sqlite3.connect("data/ledger.db") as conn:
         # Example: Filter balance by the selected Fiscal Year
@@ -49,7 +54,9 @@ def get_dashboard_summary():
             FROM ledger 
             WHERE transaction_date != 'pending' 
             AND fiscal_year_id = ?
-            ORDER BY transaction_date DESC 
+            AND is_deleted = 0
+            AND daily_posted_balance IS NOT NULL
+            ORDER BY transaction_date DESC, id DESC
             LIMIT 1
         """, (fy_id,)).fetchone()
         
@@ -62,10 +69,11 @@ def get_dashboard_summary():
             FROM ledger 
             WHERE transaction_date = 'pending'
             AND fiscal_year_id = ?
+            AND is_deleted = 0
         """, (fy_id,)).fetchone()
 
-        latest_posted_val = latest_posted[0] if latest_posted else 0.0
-        pending_sum_val = pending_sum[0] if pending_sum and pending_sum[0] is not None else 0.0
+        latest_posted_val = as_float(latest_posted[0]) if latest_posted else 0.0
+        pending_sum_val = as_float(pending_sum[0]) if pending_sum else 0.0
         
         # 3. Total including pending
         total_balance = latest_posted_val + pending_sum_val
@@ -75,9 +83,20 @@ def get_dashboard_summary():
 # Initialize the system
 db.init_db()
 
+st.markdown("""
+    <style>
+        [data-testid="stSidebarNav"] {
+            display: none;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+fiscal_year_selector()
+
 st.sidebar.title("Accounting System")
 page = st.sidebar.radio("Navigate to:", [
     "Dashboard", 
+    "Transactions",
     "Reconcile Expenses", 
     "Manual Entry", 
     "Import Bank Files", 
@@ -87,10 +106,6 @@ page = st.sidebar.radio("Navigate to:", [
 if page == "Dashboard":
     st.title("Welcome")
     st.write("Use the sidebar to manage your accounts.")
-
-    # 1. Add the Selector at the top
-    # This will render the dropdown and sync st.session_state.selected_fy
-    fiscal_year_selector() 
     
     # ... inside your render function
     posted, pending, total = get_dashboard_summary()
@@ -103,8 +118,10 @@ if page == "Dashboard":
     from pages import dashboard
     dashboard.render_dashboard_table()
 
+elif page == "Transactions":
+    from pages import transactions
+    transactions.render()
 elif page == "Reconcile Expenses":
-    fiscal_year_selector()
     from pages import reconcile
     reconcile.render_reconciliation()
 elif page == "Manual Entry":
