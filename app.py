@@ -97,6 +97,7 @@ st.sidebar.title("Accounting System")
 page = st.sidebar.radio("Navigate to:", [
     "Dashboard", 
     "Transactions",
+    "Reports",
     "Reconcile Expenses", 
     "Manual Entry", 
     "Import Bank Files", 
@@ -121,6 +122,9 @@ if page == "Dashboard":
 elif page == "Transactions":
     from pages import transactions
     transactions.render()
+elif page == "Reports":
+    from pages import reports
+    reports.render()
 elif page == "Reconcile Expenses":
     from pages import reconcile
     reconcile.render_reconciliation()

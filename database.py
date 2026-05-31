@@ -113,4 +113,36 @@ def init_db():
                 FOREIGN KEY(program_id) REFERENCES programs(id)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS topscore_product_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_name TEXT NOT NULL UNIQUE,
+                grouping TEXT NOT NULL,
+                category_id INTEGER,
+                allocation_method_id INTEGER,
+                active_ind INTEGER DEFAULT 1,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
+                FOREIGN KEY(category_id) REFERENCES categories(id),
+                FOREIGN KEY(allocation_method_id) REFERENCES allocation_methods(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS topscore_transfer_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_filename TEXT NOT NULL,
+                source_row_number INTEGER NOT NULL,
+                transfer_timestamp TEXT,
+                transfer_id TEXT,
+                item_type TEXT,
+                type TEXT,
+                product_name TEXT,
+                applied_currency TEXT,
+                amount REAL,
+                identifier TEXT,
+                imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source_filename, source_row_number)
+            )
+        """)
         conn.commit()
