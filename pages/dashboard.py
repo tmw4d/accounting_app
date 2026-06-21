@@ -133,7 +133,7 @@ def render_dashboard_table():
     )
     st.dataframe(
         styled_df,
-        use_container_width=True,
+        width="stretch",
         height=180,
     )
 
@@ -175,6 +175,7 @@ def render_topscore_player_counts():
                             THEN 'Middle School Other'
                         ELSE NULL
                     END AS program_name,
+                    ifnull(m.primary_registration_ind, 0) AS primary_registration_ind,
                     t.identifier,
                     t.amount
                 FROM topscore_transfer_items t
@@ -191,7 +192,9 @@ def render_topscore_player_counts():
             SELECT
                 program_name,
                 COUNT(*) AS registration_items,
+                SUM(CASE WHEN primary_registration_ind = 1 THEN 1 ELSE 0 END) AS primary_registration_items,
                 COUNT(DISTINCT identifier) AS distinct_charge_ids,
+                COUNT(DISTINCT CASE WHEN primary_registration_ind = 1 THEN identifier END) AS primary_charge_ids,
                 SUM(amount) AS gross_amount
             FROM classified
             WHERE program_name IS NOT NULL
@@ -214,16 +217,31 @@ def render_topscore_player_counts():
     ordered_df[["registration_items", "distinct_charge_ids", "gross_amount"]] = ordered_df[
         ["registration_items", "distinct_charge_ids", "gross_amount"]
     ].fillna(0)
+    ordered_df[["primary_registration_items", "primary_charge_ids"]] = ordered_df[
+        ["primary_registration_items", "primary_charge_ids"]
+    ].fillna(0)
 
     metrics_df = ordered_df.set_index("program_name")[
-        ["registration_items", "distinct_charge_ids", "gross_amount"]
+        [
+            "primary_registration_items",
+            "registration_items",
+            "primary_charge_ids",
+            "distinct_charge_ids",
+            "gross_amount",
+        ]
     ].T
-    metrics_df.index = ["Registration Items", "Distinct Charge IDs", "Gross Amount"]
+    metrics_df.index = [
+        "Primary Registration Items",
+        "All Registration Items",
+        "Primary Charge IDs",
+        "All Distinct Charge IDs",
+        "Gross Amount",
+    ]
     metrics_df["Total"] = metrics_df.sum(axis=1)
     metrics_df.index.name = "Metric"
 
     st.write("### TopScore Player Counts by Program")
-    st.caption("Based on imported TopScore payment rows in the selected fiscal year. Registration Items is the primary participation count; Distinct Charge IDs is included for reconciliation checks.")
+    st.caption("Based on imported TopScore payment rows in the selected fiscal year. Primary rows use products tagged as primary registrations in Configuration > TopScore Products.")
 
     def highlight_total_column(data):
         styles = pd.DataFrame("", index=data.index, columns=data.columns)
@@ -245,7 +263,7 @@ def render_topscore_player_counts():
 
     st.dataframe(
         styled_counts,
-        use_container_width=True,
+        width="stretch",
         height=180,
     )
 

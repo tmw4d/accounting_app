@@ -3,6 +3,61 @@ import sqlite3
 def get_connection():
     return sqlite3.connect("data/ledger.db")
 
+
+def recalculate_running_balances(conn):
+    """Rebuild stored balances for all active, posted ledger transactions."""
+    conn.execute("""
+        UPDATE ledger
+        SET running_balance = NULL
+        WHERE is_deleted != 0
+            OR transaction_date = 'pending'
+    """)
+    conn.execute("""
+        WITH calculated_balances AS (
+            SELECT
+                id,
+                ROUND(
+                    SUM(amount) OVER (
+                        ORDER BY transaction_date, id
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ),
+                    2
+                ) AS balance
+            FROM ledger
+            WHERE is_deleted = 0
+                AND transaction_date != 'pending'
+        )
+        UPDATE ledger
+        SET running_balance = (
+            SELECT balance
+            FROM calculated_balances
+            WHERE calculated_balances.id = ledger.id
+        )
+        WHERE id IN (SELECT id FROM calculated_balances)
+    """)
+
+
+def set_transaction_deleted(transaction_id, is_deleted, conn=None):
+    """Soft-delete or restore one transaction and immediately rebuild balances."""
+    owns_connection = conn is None
+    active_conn = conn or get_connection()
+    try:
+        cursor = active_conn.execute(
+            "UPDATE ledger SET is_deleted = ? WHERE id = ?",
+            (1 if is_deleted else 0, int(transaction_id)),
+        )
+        recalculate_running_balances(active_conn)
+        if owns_connection:
+            active_conn.commit()
+        return cursor.rowcount
+    except Exception:
+        if owns_connection:
+            active_conn.rollback()
+        raise
+    finally:
+        if owns_connection:
+            active_conn.close()
+
 def init_db():
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -120,6 +175,7 @@ def init_db():
                 grouping TEXT NOT NULL,
                 category_id INTEGER,
                 allocation_method_id INTEGER,
+                primary_registration_ind INTEGER DEFAULT 0,
                 active_ind INTEGER DEFAULT 1,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -128,6 +184,15 @@ def init_db():
                 FOREIGN KEY(allocation_method_id) REFERENCES allocation_methods(id)
             )
         """)
+        mapping_columns = [
+            row[1]
+            for row in cursor.execute("PRAGMA table_info(topscore_product_mappings)").fetchall()
+        ]
+        if "primary_registration_ind" not in mapping_columns:
+            cursor.execute("""
+                ALTER TABLE topscore_product_mappings
+                ADD COLUMN primary_registration_ind INTEGER DEFAULT 0
+            """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS topscore_transfer_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

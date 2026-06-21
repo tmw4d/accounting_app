@@ -30,6 +30,7 @@ def _ensure_table():
                 grouping TEXT NOT NULL,
                 category_id INTEGER,
                 allocation_method_id INTEGER,
+                primary_registration_ind INTEGER DEFAULT 0,
                 active_ind INTEGER DEFAULT 1,
                 notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -38,6 +39,15 @@ def _ensure_table():
                 FOREIGN KEY(allocation_method_id) REFERENCES allocation_methods(id)
             )
         """)
+        columns = [
+            row[1]
+            for row in conn.execute("PRAGMA table_info(topscore_product_mappings)").fetchall()
+        ]
+        if "primary_registration_ind" not in columns:
+            conn.execute("""
+                ALTER TABLE topscore_product_mappings
+                ADD COLUMN primary_registration_ind INTEGER DEFAULT 0
+            """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS topscore_transfer_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +108,7 @@ def _load_mapping_for_edit(mapping_id):
                 grouping,
                 category_id,
                 allocation_method_id,
+                primary_registration_ind,
                 active_ind,
                 notes
             FROM topscore_product_mappings
@@ -113,6 +124,7 @@ def _load_mappings(search_text="", grouping_filter="All", active_filter="Active"
             m.grouping,
             c.flow || ' - ' || c.name AS category,
             am.name AS allocation_method,
+            m.primary_registration_ind,
             m.active_ind,
             m.notes
         FROM topscore_product_mappings m
@@ -208,7 +220,7 @@ def _default_refs_for_grouping(grouping, category_options, allocation_options):
     return category_options[category_name], allocation_options[allocation_name]
 
 
-def _upsert_mapping(product_name, grouping, category_id, allocation_method_id, active_ind, notes):
+def _upsert_mapping(product_name, grouping, category_id, allocation_method_id, primary_registration_ind, active_ind, notes):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             INSERT INTO topscore_product_mappings (
@@ -216,22 +228,24 @@ def _upsert_mapping(product_name, grouping, category_id, allocation_method_id, a
                 grouping,
                 category_id,
                 allocation_method_id,
+                primary_registration_ind,
                 active_ind,
                 notes,
                 updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(product_name) DO UPDATE SET
                 grouping = excluded.grouping,
                 category_id = excluded.category_id,
                 allocation_method_id = excluded.allocation_method_id,
+                primary_registration_ind = excluded.primary_registration_ind,
                 active_ind = excluded.active_ind,
                 notes = excluded.notes,
                 updated_at = CURRENT_TIMESTAMP
-        """, (product_name, grouping, category_id, allocation_method_id, active_ind, notes))
+        """, (product_name, grouping, category_id, allocation_method_id, primary_registration_ind, active_ind, notes))
 
 
-def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_method_id, active_ind, notes):
+def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_method_id, primary_registration_ind, active_ind, notes):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             UPDATE topscore_product_mappings
@@ -239,6 +253,7 @@ def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_
                 grouping = ?,
                 category_id = ?,
                 allocation_method_id = ?,
+                primary_registration_ind = ?,
                 active_ind = ?,
                 notes = ?,
                 updated_at = CURRENT_TIMESTAMP
@@ -248,6 +263,7 @@ def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_
             grouping,
             category_id,
             allocation_method_id,
+            primary_registration_ind,
             active_ind,
             notes,
             mapping_id,
@@ -328,7 +344,13 @@ def _scan_topscore_products(filename):
         "net_amount": "sum",
     })
 
-    mappings = _load_mappings(active_filter="Active")[["product_name", "grouping", "category", "allocation_method"]]
+    mappings = _load_mappings(active_filter="Active")[[
+        "product_name",
+        "grouping",
+        "category",
+        "allocation_method",
+        "primary_registration_ind",
+    ]]
     return products_df.merge(mappings, on="product_name", how="left")
 
 
@@ -479,7 +501,7 @@ def render():
             st.dataframe(
                 pd.DataFrame(parsed_rows[:25], columns=["Product Name", "Grouping"]),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
         if st.button("Import Pasted Mappings", disabled=not parsed_rows):
             count = _bulk_import_mappings(parsed_rows, apply_defaults, category_options, allocation_options)
@@ -493,6 +515,11 @@ def render():
         c1, c2 = st.columns(2)
         category_name = c1.selectbox("Category", list(category_options.keys()))
         allocation_name = c2.selectbox("Allocation Method", list(allocation_options.keys()))
+        primary_registration_ind = st.checkbox(
+            "Primary registration product",
+            value=False,
+            help="Use this product for season-level player counts when players may also buy add-ons or secondary programs.",
+        )
         active_ind = st.checkbox("Active", value=True)
         notes = st.text_area("Notes", height=68)
 
@@ -505,6 +532,7 @@ def render():
                     grouping,
                     category_options[category_name],
                     allocation_options[allocation_name],
+                    1 if primary_registration_ind else 0,
                     1 if active_ind else 0,
                     notes.strip() or None,
                 )
@@ -530,6 +558,7 @@ def render():
                 edit_grouping,
                 edit_category_id,
                 edit_allocation_method_id,
+                edit_primary_registration_ind,
                 edit_active_ind,
                 edit_notes,
             ) = selected_mapping
@@ -550,6 +579,11 @@ def render():
                 allocation_index = allocation_labels.index(current_allocation) if current_allocation in allocation_labels else 0
                 updated_allocation = e2.selectbox("Allocation Method", allocation_labels, index=allocation_index)
 
+                updated_primary_registration = st.checkbox(
+                    "Primary registration product",
+                    value=bool(edit_primary_registration_ind),
+                    help="Use this product for season-level player counts when players may also buy add-ons or secondary programs.",
+                )
                 updated_active = st.checkbox("Active", value=bool(edit_active_ind))
                 updated_notes = st.text_area("Notes", value=edit_notes or "", height=68)
 
@@ -564,6 +598,7 @@ def render():
                                 updated_grouping,
                                 category_options[updated_category],
                                 allocation_options[updated_allocation],
+                                1 if updated_primary_registration else 0,
                                 1 if updated_active else 0,
                                 updated_notes.strip() or None,
                             )
@@ -588,14 +623,16 @@ def render():
             "grouping": "Grouping",
             "category": "Category",
             "allocation_method": "Allocation Method",
+            "primary_registration_ind": "Primary Registration",
             "active_ind": "Active",
             "notes": "Notes",
         })
+        display_df["Primary Registration"] = display_df["Primary Registration"].map({1: "Yes", 0: "No"})
         display_df["Active"] = display_df["Active"].map({1: "Yes", 0: "No"})
         st.dataframe(
-            display_df[["Product Name", "Grouping", "Category", "Allocation Method", "Active", "Notes"]],
+            display_df[["Product Name", "Grouping", "Category", "Allocation Method", "Primary Registration", "Active", "Notes"]],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     st.write("### Scan TopScore Export")
@@ -649,7 +686,7 @@ def render():
                     "net_amount": "Net Amount",
                 })[["Product Name", "Rows", "Net Amount"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
     with tab_mapped:
@@ -669,7 +706,7 @@ def render():
                     "allocation_method": "Allocation Method",
                 })[["Grouping", "Product Name", "Rows", "Net Amount", "Category", "Allocation Method"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
     st.write("### TopScore Reports")
@@ -691,7 +728,7 @@ def render():
                 "net_amount": "Net Amount",
             }),
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     report_tab_summary, report_tab_players = st.tabs(["Grouping Summary", "Player Counts"])
@@ -715,7 +752,7 @@ def render():
                     "net_amount": "Net Amount",
                 }),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
     with report_tab_players:
@@ -747,7 +784,7 @@ def render():
                     "gross_amount": "Gross Amount",
                 }),
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )
 
             detail = player_counts.copy()
@@ -763,5 +800,5 @@ def render():
                     "gross_amount": "Gross Amount",
                 })[["Season", "Season Group", "Product Name", "Payment Rows", "Distinct Charge IDs", "Gross Amount"]],
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
             )

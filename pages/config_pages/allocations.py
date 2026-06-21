@@ -28,7 +28,7 @@ def render():
             col1, col2 = st.columns([3, 1])
             
             # Select button (updates session state)
-            if col1.button(f"**{name}**", use_container_width=True, help=desc or "No description"):
+            if col1.button(f"**{name}**", width="stretch", help=desc or "No description"):
                 st.session_state.sel_method_id = mid
                 st.rerun()
             

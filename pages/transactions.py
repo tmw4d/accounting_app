@@ -4,6 +4,8 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+import database as db
+
 
 DB_PATH = "data/ledger.db"
 
@@ -110,6 +112,20 @@ def _load_transactions(fy_id, search_text, category_id):
         return pd.read_sql_query(query, conn, params=params)
 
 
+def _load_deleted_transactions(fy_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        return conn.execute("""
+            SELECT id, transaction_date, description, amount
+            FROM ledger
+            WHERE fiscal_year_id = ?
+                AND is_deleted != 0
+            ORDER BY
+                CASE WHEN transaction_date = 'pending' THEN 0 ELSE 1 END,
+                transaction_date DESC,
+                id DESC
+        """, (fy_id,)).fetchall()
+
+
 def render():
     st.title("Transactions")
     st.write("View pending activity and recent posted ledger transactions for the selected fiscal year.")
@@ -192,7 +208,7 @@ def render():
     st.dataframe(
         table_df,
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         column_config={
             "Description": st.column_config.TextColumn(width="large"),
             "Notes": st.column_config.TextColumn(width="large"),
@@ -319,7 +335,42 @@ def render():
                 new_more_notes.strip() or None,
                 int(selected_transaction_id),
             ))
+            db.recalculate_running_balances(conn)
             conn.commit()
 
         st.success("Transaction updated.")
         st.rerun()
+
+    with st.expander("Delete this transaction"):
+        confirm_delete = st.checkbox(
+            "I understand this transaction will be hidden but can be restored later.",
+            key=f"confirm_delete_{selected_transaction_id}",
+        )
+        if st.button(
+            "Soft Delete Transaction",
+            disabled=not confirm_delete,
+            key=f"delete_{selected_transaction_id}",
+        ):
+            db.set_transaction_deleted(selected_transaction_id, True)
+            st.success("Transaction deleted and running balances recalculated.")
+            st.rerun()
+
+    st.divider()
+    with st.expander("Restore a deleted transaction"):
+        deleted_transactions = _load_deleted_transactions(fy_id)
+        if not deleted_transactions:
+            st.info("No deleted transactions were found for this fiscal year.")
+        else:
+            restore_options = {
+                f"{row_id} | {'Pending' if tx_date == 'pending' else tx_date} | {_format_currency(amount)} | {description}": row_id
+                for row_id, tx_date, description, amount in deleted_transactions
+            }
+            restore_label = st.selectbox(
+                "Deleted transaction",
+                list(restore_options.keys()),
+                key="restore_transaction",
+            )
+            if st.button("Restore Transaction", key="restore_transaction_button"):
+                db.set_transaction_deleted(restore_options[restore_label], False)
+                st.success("Transaction restored and running balances recalculated.")
+                st.rerun()

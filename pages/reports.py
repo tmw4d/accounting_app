@@ -275,7 +275,40 @@ def _get_two_year_category_program_breakdown(fy_id):
     pivot = pivot.sort_values(["_flow_sort", "category"]).drop(columns=["_flow_sort"])
     pivot = pivot.set_index(["flow", "category"])
     pivot.columns = pd.MultiIndex.from_tuples(pivot.columns, names=["Fiscal Year", "Program"])
-    return pivot, fiscal_years
+
+    zero_totals = pd.Series(0.0, index=pivot.columns)
+    income_totals = (
+        pivot.xs("Income", level="flow").sum()
+        if "Income" in pivot.index.get_level_values("flow")
+        else zero_totals.copy()
+    )
+    expense_totals = (
+        pivot.xs("Expense", level="flow").sum()
+        if "Expense" in pivot.index.get_level_values("flow")
+        else zero_totals.copy()
+    )
+
+    sections = []
+    for flow, label, totals in [
+        ("Income", "Total Income", income_totals),
+        ("Expense", "Total Expenses", expense_totals),
+    ]:
+        if flow in pivot.index.get_level_values("flow"):
+            sections.append(pivot.xs(flow, level="flow", drop_level=False))
+        subtotal = pd.DataFrame(
+            [totals],
+            index=pd.MultiIndex.from_tuples([(flow, label)], names=pivot.index.names),
+            columns=pivot.columns,
+        )
+        sections.append(subtotal)
+
+    net_total = pd.DataFrame(
+        [income_totals - expense_totals],
+        index=pd.MultiIndex.from_tuples([("Net", "Net Total")], names=pivot.index.names),
+        columns=pivot.columns,
+    )
+    sections.append(net_total)
+    return pd.concat(sections), fiscal_years
 
 
 def _compact_pie_data(df, flow, max_slices=7):
@@ -414,11 +447,17 @@ def _two_year_matrix_to_pdf_table(df, fiscal_years):
 
     data = [header_top, header_bottom]
     section_start_rows = []
+    subtotal_rows = []
+    net_total_row = None
     previous_flow = None
     for (flow, category), row in df.iterrows():
         if flow != previous_flow:
             section_start_rows.append(len(data))
             previous_flow = flow
+        if category in {"Total Income", "Total Expenses"}:
+            subtotal_rows.append(len(data))
+        elif category == "Net Total":
+            net_total_row = len(data)
         data.append([flow, category] + [_currency(value) for value in row.tolist()])
 
     table = Table(
@@ -450,6 +489,16 @@ def _two_year_matrix_to_pdf_table(df, fiscal_years):
     for row_idx in section_start_rows:
         style.add("LINEABOVE", (0, row_idx), (-1, row_idx), 1.0, colors.black)
         style.add("FONTNAME", (0, row_idx), (-1, row_idx), "Helvetica-Bold")
+
+    for row_idx in subtotal_rows:
+        style.add("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#dbeafe"))
+        style.add("FONTNAME", (0, row_idx), (-1, row_idx), "Helvetica-Bold")
+        style.add("LINEABOVE", (0, row_idx), (-1, row_idx), 0.75, colors.HexColor("#2563eb"))
+
+    if net_total_row is not None:
+        style.add("BACKGROUND", (0, net_total_row), (-1, net_total_row), colors.HexColor("#dcfce7"))
+        style.add("FONTNAME", (0, net_total_row), (-1, net_total_row), "Helvetica-Bold")
+        style.add("LINEABOVE", (0, net_total_row), (-1, net_total_row), 1.25, colors.HexColor("#166534"))
 
     for col_idx, label in enumerate(header_bottom):
         if label == "Total":
@@ -584,7 +633,7 @@ def render():
     else:
         st.dataframe(
             report_data["program_breakdown"].style.format("${:,.0f}"),
-            use_container_width=True,
+            width="stretch",
         )
 
     st.write("### Posted Category Totals Preview")
@@ -600,7 +649,7 @@ def render():
                 "total": "Total",
             })[["Flow", "Category", "Total"]],
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
         )
 
     st.write("### Two-Year Category by Program Preview")
@@ -609,7 +658,7 @@ def render():
     else:
         st.dataframe(
             report_data["two_year_matrix"].style.format("${:,.0f}"),
-            use_container_width=True,
+            width="stretch",
         )
 
     filename = f"{report_data['fy_name'].replace(' ', '_')}_financial_report.pdf"

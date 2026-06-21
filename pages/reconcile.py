@@ -77,7 +77,7 @@ def render_reconciliation():
                 # Show preview table
                 df_preview = pd.DataFrame(bulk_txns, columns=["ID", "Date", "Description", "Amount"])
                 df_preview["Amount"] = df_preview["Amount"].apply(lambda x: f"${x:,.2f}")
-                st.dataframe(df_preview[["Date", "Description", "Amount"]], use_container_width=True)
+                st.dataframe(df_preview[["Date", "Description", "Amount"]], width="stretch")
                 
                 st.write("#### Apply Reconciliation values to all matching transactions:")
                 with st.form("bulk_reconcile_form"):

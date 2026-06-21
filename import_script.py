@@ -1,6 +1,8 @@
 import pandas as pd
 import sqlite3
 
+import database as db
+
 #~/Downloads/'YULA Financial Management - 2025-2026 - BankAccount_mod.csv'
 
 
@@ -23,6 +25,7 @@ def import_csv_with_mapping(file_path):
         return x
 
     df['amount'] = df['Amount'].apply(clean_currency)
+    df['daily_posted_balance'] = df['Daily Posted Balance'].apply(clean_currency)
     
     # Map CSV 'Category' to category_id
     # If not found, it defaults to None (NULL in SQL)
@@ -33,6 +36,7 @@ def import_csv_with_mapping(file_path):
         'transaction_date': df['Date'],
         'description': df['Description'],
         'amount': df['amount'],
+        'daily_posted_balance': df['daily_posted_balance'],
         'transaction_type': df['Transaction Type'],
         'category_id': df['category_id'],
         'source_indicator': 'Bank',
@@ -42,5 +46,7 @@ def import_csv_with_mapping(file_path):
 
     # 5. Insert
     ledger_df.to_sql('ledger', conn, if_exists='append', index=False)
+    db.recalculate_running_balances(conn)
+    conn.commit()
     conn.close()
     print("Import complete with category mapping applied.")

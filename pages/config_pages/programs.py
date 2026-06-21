@@ -33,7 +33,7 @@ def render():
     for prog in programs:
         pid, name, code, desc, active = prog
         col1, col2 = st.columns([3, 1])
-        col1.button(f"**[{code}] {name}**", use_container_width=True, help=desc if desc else "No description provided")
+        col1.button(f"**[{code}] {name}**", width="stretch", help=desc if desc else "No description provided")
         if col2.button("Delete", key=f"del_prog_{pid}", type="primary"):
             with sqlite3.connect("data/ledger.db") as conn:
                 conn.execute("DELETE FROM programs WHERE id = ?", (pid,))

@@ -2,6 +2,8 @@ import streamlit as st
 import sqlite3
 from datetime import datetime
 
+import database as db
+
 def render():
     st.title("✍️ Manual Transaction Entry")
     st.write("Record a new manual transaction directly into the ledger. The system will automatically classify its fiscal year and type.")
@@ -88,6 +90,7 @@ def render():
                             category_id, fiscal_year_id, source_indicator, notes, more_notes, is_deleted
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Manual', ?, ?, 0)
                     """, (date_str, desc, tx_amt, tx_type, tx_check, tx_cat, matched_fy_id, notes or None, more_notes or None))
+                    db.recalculate_running_balances(conn)
                     conn.commit()
                 status_label = "pending " if is_pending else ""
                 st.success(f"Successfully recorded manual {status_label}{tx_flow.lower()} of ${amount:,.2f} for '{desc}'!")

@@ -98,6 +98,7 @@ page = st.sidebar.radio("Navigate to:", [
     "Dashboard", 
     "Transactions",
     "Reports",
+    "Cloud Sync",
     "Reconcile Expenses", 
     "Manual Entry", 
     "Import Bank Files", 
@@ -125,6 +126,9 @@ elif page == "Transactions":
 elif page == "Reports":
     from pages import reports
     reports.render()
+elif page == "Cloud Sync":
+    from pages import cloud_sync
+    cloud_sync.render()
 elif page == "Reconcile Expenses":
     from pages import reconcile
     reconcile.render_reconciliation()
