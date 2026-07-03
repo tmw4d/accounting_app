@@ -172,7 +172,7 @@ def _get_category_totals(fy_id):
             LEFT JOIN categories c ON l.category_id = c.id
             WHERE l.fiscal_year_id = ?
                 AND l.is_deleted = 0
-                AND l.transaction_date != 'pending'
+                --AND l.transaction_date != 'pending'
             GROUP BY category, flow
             HAVING total > 0
             ORDER BY
@@ -213,7 +213,7 @@ def _get_two_year_category_program_breakdown(fy_id):
             LEFT JOIN programs p ON ar.program_id = p.id
             WHERE l.fiscal_year_id IN ({placeholders})
                 AND l.is_deleted = 0
-                AND l.transaction_date != 'pending'
+                --AND l.transaction_date != 'pending'
             GROUP BY l.fiscal_year_id, flow, category, p.name
 
             UNION ALL
@@ -236,7 +236,7 @@ def _get_two_year_category_program_breakdown(fy_id):
             LEFT JOIN categories c ON l.category_id = c.id
             WHERE l.fiscal_year_id IN ({placeholders})
                 AND l.is_deleted = 0
-                AND l.transaction_date != 'pending'
+                --AND l.transaction_date != 'pending'
             GROUP BY l.fiscal_year_id, flow, category
         """
         df = pd.read_sql_query(query, conn, params=fy_ids + fy_ids)
