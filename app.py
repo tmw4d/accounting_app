@@ -1,24 +1,30 @@
 import streamlit as st
 import database as db
-
-import sqlite3
+import cloud_sync
 
 st.set_page_config(page_title="Accounting System", layout="wide")
 
+# Ensure data directory exists, attempt startup S3 download if missing, and initialize schema
+db.ensure_data_dir()
+if not db.DB_PATH.exists():
+    cloud_sync.auto_download_on_startup(st.secrets)
+db.init_db()
+
 # Initialize session state immediately when the app starts
 if "selected_fy" not in st.session_state:
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         # Default to the active fiscal year
         active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
         st.session_state.selected_fy = active_year[0] if active_year else 1
 
 def fiscal_year_selector():
     # 1. Fetch available years
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         years = conn.execute("SELECT fiscal_year_id, name FROM fy ORDER BY name DESC").fetchall()
     
     # 2. Determine default (active) year
-    active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
+    with db.get_connection() as conn:
+        active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
     default_id = active_year[0] if active_year else (years[0][0] if years else None)
 
     # 3. Initialize session state
@@ -46,7 +52,7 @@ def get_dashboard_summary():
         return float(value) if value is not None else 0.0
 
     fy_id = st.session_state.selected_fy
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         # Example: Filter balance by the selected Fiscal Year
         # we don't use a f-string to prevent SQL injection
         latest_posted = conn.execute("""
@@ -80,9 +86,6 @@ def get_dashboard_summary():
         
         return latest_posted_val, pending_sum_val, total_balance
     
-# Initialize the system
-db.init_db()
-
 st.markdown("""
     <style>
         [data-testid="stSidebarNav"] {

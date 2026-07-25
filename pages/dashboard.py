@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import database as db
 import pandas as pd
 
 
@@ -25,7 +25,7 @@ FINANCIAL_PROGRAM_ORDER = [
 def render_dashboard_table():
     fy_id = st.session_state.selected_fy
     
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         # 1. Fetch data: Sums grouped by flow, program, and category
         query = """
             SELECT 
@@ -61,6 +61,7 @@ def render_dashboard_table():
     
     # 3. Add "All Programs" Column (Sum across rows)
     pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
+
     
     # 4. Calculate Total Row (Income - Expense)
     # We treat Income as positive and Expense as negative based on your flow logic
@@ -143,7 +144,8 @@ def render_dashboard_table():
 def render_topscore_player_counts():
     fy_id = st.session_state.selected_fy
 
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
+
         has_topscore_table = conn.execute("""
             SELECT 1
             FROM sqlite_master

@@ -1,15 +1,13 @@
 import csv
 import os
-import sqlite3
 from io import StringIO
 
+import database as db
 import pandas as pd
 import streamlit as st
 
-
-DB_PATH = "data/ledger.db"
-IMPORT_FOLDER = "bank_import"
 GROUPINGS = [
+
     "High School",
     "Middle School",
     "Winter",
@@ -22,7 +20,8 @@ GROUPINGS = [
 
 
 def _ensure_table():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS topscore_product_mappings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,7 +67,8 @@ def _ensure_table():
 
 
 def _load_reference_data():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         categories = conn.execute("""
             SELECT id, flow, name
             FROM categories
@@ -100,7 +100,8 @@ def _reverse_lookup(options, selected_id):
 
 
 def _load_mapping_for_edit(mapping_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return conn.execute("""
             SELECT
                 id,
@@ -149,7 +150,8 @@ def _load_mappings(search_text="", grouping_filter="All", active_filter="Active"
 
     query += " ORDER BY m.grouping, m.product_name"
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return pd.read_sql_query(query, conn, params=params)
 
 
@@ -221,7 +223,8 @@ def _default_refs_for_grouping(grouping, category_options, allocation_options):
 
 
 def _upsert_mapping(product_name, grouping, category_id, allocation_method_id, primary_registration_ind, active_ind, notes):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         conn.execute("""
             INSERT INTO topscore_product_mappings (
                 product_name,
@@ -246,7 +249,8 @@ def _upsert_mapping(product_name, grouping, category_id, allocation_method_id, p
 
 
 def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_method_id, primary_registration_ind, active_ind, notes):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         conn.execute("""
             UPDATE topscore_product_mappings
             SET product_name = ?,
@@ -272,7 +276,8 @@ def _update_mapping(mapping_id, product_name, grouping, category_id, allocation_
 
 def _bulk_import_mappings(rows, apply_defaults, category_options, allocation_options):
     imported = 0
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         for product_name, grouping in rows:
             if apply_defaults:
                 category_id, allocation_method_id = _default_refs_for_grouping(
@@ -305,36 +310,34 @@ def _bulk_import_mappings(rows, apply_defaults, category_options, allocation_opt
     return imported
 
 
-def _topscore_files():
-    if not os.path.exists(IMPORT_FOLDER):
-        return []
-    return sorted(
-        [
-            filename
-            for filename in os.listdir(IMPORT_FOLDER)
-            if filename.lower().endswith(".csv") and "transfer" in filename.lower()
-        ],
-        reverse=True,
-    )
+def _read_csv_rows(file_source):
+    if isinstance(file_source, (str, os.PathLike)):
+        with open(file_source, newline="", encoding="utf-8-sig") as csv_file:
+            yield from csv.DictReader(csv_file)
+    else:
+        file_source.seek(0)
+        content = file_source.read()
+        if isinstance(content, bytes):
+            content = content.decode("utf-8-sig", errors="ignore")
+        file_source.seek(0)
+        yield from csv.DictReader(StringIO(content))
 
 
-def _scan_topscore_products(filename):
-    path = os.path.join(IMPORT_FOLDER, filename)
+def _scan_topscore_products(file_source):
     rows = []
-    with open(path, newline="", encoding="utf-8-sig") as csv_file:
-        for row in csv.DictReader(csv_file):
-            product_name = (row.get("product_name") or "").strip()
-            if not product_name:
-                continue
-            try:
-                amount = float(row.get("amount") or 0)
-            except ValueError:
-                amount = 0.0
-            rows.append({
-                "product_name": product_name,
-                "rows": 1,
-                "net_amount": amount,
-            })
+    for row in _read_csv_rows(file_source):
+        product_name = (row.get("product_name") or "").strip()
+        if not product_name:
+            continue
+        try:
+            amount = float(row.get("amount") or 0)
+        except ValueError:
+            amount = 0.0
+        rows.append({
+            "product_name": product_name,
+            "rows": 1,
+            "net_amount": amount,
+        })
 
     if not rows:
         return pd.DataFrame()
@@ -354,53 +357,53 @@ def _scan_topscore_products(filename):
     return products_df.merge(mappings, on="product_name", how="left")
 
 
-def _import_topscore_export(filename):
-    path = os.path.join(IMPORT_FOLDER, filename)
+def _import_topscore_export(file_source, filename):
     inserted = 0
     seen = 0
 
-    with sqlite3.connect(DB_PATH) as conn:
-        with open(path, newline="", encoding="utf-8-sig") as csv_file:
-            for source_row_number, row in enumerate(csv.DictReader(csv_file), start=2):
-                seen += 1
-                try:
-                    amount = float(row.get("amount") or 0)
-                except ValueError:
-                    amount = 0.0
+    with db.get_connection() as conn:
+        for source_row_number, row in enumerate(_read_csv_rows(file_source), start=2):
+            seen += 1
+            try:
+                amount = float(row.get("amount") or 0)
+            except ValueError:
+                amount = 0.0
 
-                cursor = conn.execute("""
-                    INSERT OR IGNORE INTO topscore_transfer_items (
-                        source_filename,
-                        source_row_number,
-                        transfer_timestamp,
-                        transfer_id,
-                        item_type,
-                        type,
-                        product_name,
-                        applied_currency,
-                        amount,
-                        identifier
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    filename,
+            cursor = conn.execute("""
+                INSERT OR IGNORE INTO topscore_transfer_items (
+                    source_filename,
                     source_row_number,
-                    (row.get("transfer_timestamp") or "").strip(),
-                    (row.get("transfer_id") or "").strip(),
-                    (row.get("item_type") or "").strip(),
-                    (row.get("type") or "").strip(),
-                    (row.get("product_name") or "").strip(),
-                    (row.get("applied_currency") or "").strip(),
+                    transfer_timestamp,
+                    transfer_id,
+                    item_type,
+                    type,
+                    product_name,
+                    applied_currency,
                     amount,
-                    (row.get("identifier") or "").strip(),
-                ))
-                inserted += cursor.rowcount
+                    identifier
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                filename,
+                source_row_number,
+                (row.get("transfer_timestamp") or "").strip(),
+                (row.get("transfer_id") or "").strip(),
+                (row.get("item_type") or "").strip(),
+                (row.get("type") or "").strip(),
+                (row.get("product_name") or "").strip(),
+                (row.get("applied_currency") or "").strip(),
+                amount,
+                (row.get("identifier") or "").strip(),
+            ))
+            inserted += cursor.rowcount
 
     return seen, inserted
 
 
+
 def _load_imported_files():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return pd.read_sql_query("""
             SELECT
                 source_filename,
@@ -416,7 +419,8 @@ def _load_imported_files():
 
 
 def _load_player_counts():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return pd.read_sql_query("""
             SELECT
                 m.grouping,
@@ -457,7 +461,8 @@ def _load_player_counts():
 
 
 def _load_grouping_summary():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return pd.read_sql_query("""
             SELECT
                 ifnull(m.grouping, 'Unmapped') AS grouping,
@@ -636,16 +641,16 @@ def render():
         )
 
     st.write("### Scan TopScore Export")
-    files = _topscore_files()
-    if not files:
-        st.info("No TopScore transfer CSV files found in the bank_import folder.")
+    uploaded_topscore_file = st.file_uploader("Upload TopScore Transfer CSV Export", type=["csv"], key="topscore_uploader")
+    if not uploaded_topscore_file:
+        st.info("Upload a TopScore transfer CSV export file to scan products and import details.")
         return
 
-    selected_file = st.selectbox("TopScore Export File", files)
+    file_name = uploaded_topscore_file.name
     imported_files = _load_imported_files()
-    imported_match = imported_files[imported_files["source_filename"] == selected_file]
+    imported_match = imported_files[imported_files["source_filename"] == file_name]
     if imported_match.empty:
-        st.warning("This export has not been imported into the TopScore detail table yet.")
+        st.warning("This export file has not been imported into the TopScore detail table yet.")
     else:
         imported_row = imported_match.iloc[0]
         st.success(
@@ -653,12 +658,13 @@ def render():
             f"{int(imported_row['transfers']):,} transfers."
         )
 
-    if st.button("Import Selected TopScore Export"):
-        seen, inserted = _import_topscore_export(selected_file)
-        st.success(f"Read {seen:,} rows and inserted {inserted:,} new rows.")
+    if st.button("Import Uploaded TopScore Export", type="primary"):
+        seen, inserted = _import_topscore_export(uploaded_topscore_file, file_name)
+        st.success(f"Read {seen:,} rows and inserted {inserted:,} new detail rows.")
         st.rerun()
 
-    scan_df = _scan_topscore_products(selected_file)
+    scan_df = _scan_topscore_products(uploaded_topscore_file)
+
     if scan_df.empty:
         st.info("No product names found in this file.")
         return

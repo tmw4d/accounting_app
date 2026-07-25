@@ -1,9 +1,7 @@
 import pandas as pd
-import sqlite3
-
 import database as db
 
-#~/Downloads/'YULA Financial Management - 2025-2026 - BankAccount_mod.csv'
+# ~/Downloads/'YULA Financial Management - 2025-2026 - BankAccount_mod.csv'
 
 
 def import_csv_with_mapping(file_path):
@@ -11,7 +9,7 @@ def import_csv_with_mapping(file_path):
     df = pd.read_csv(file_path)
     
     # 2. Connect and get Category mapping
-    conn = sqlite3.connect("data/ledger.db")
+    conn = db.get_connection()
     # Fetch {name: id} pairs from categories table
     cat_map = pd.read_sql("SELECT name, id FROM categories", conn).set_index('name')['id'].to_dict()
     

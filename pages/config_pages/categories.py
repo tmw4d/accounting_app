@@ -1,5 +1,6 @@
+import database as db
 import streamlit as st
-import sqlite3
+
 
 def render():
     st.header("Manage Categories")
@@ -20,19 +21,19 @@ def render():
             
             if submitted and name:
                 try:
-                    with sqlite3.connect("data/ledger.db") as conn:
+                    with db.get_connection() as conn:
                         conn.execute(
                             "INSERT INTO categories (flow, name, description, active_ind) VALUES (?, ?, ?, ?)", 
                             (flow, name, desc, 1 if active else 0)
                         )
                     st.success(f"Category '{name}' added!")
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Category name already exists.")
+                except Exception as exc:
+                    st.error(f"Error adding category: {exc}")
 
     # --- View/Manage Categories ---
     st.subheader("Existing Categories")
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         categories = conn.execute("SELECT id, flow, name, description, active_ind FROM categories").fetchall()
         
     if categories:
@@ -45,11 +46,11 @@ def render():
             # Simple toggle for active status or delete
             c1, c2 = st.columns([1, 1])
             if c1.button("Toggle Active", key=f"tog_{cid}"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("UPDATE categories SET active_ind = NOT active_ind WHERE id = ?", (cid,))
                 st.rerun()
             if c2.button("Delete", key=f"del_{cid}"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("DELETE FROM categories WHERE id = ?", (cid,))
                 st.rerun()
             st.divider()

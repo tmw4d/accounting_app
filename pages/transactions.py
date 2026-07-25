@@ -1,13 +1,8 @@
-import sqlite3
 from datetime import date
-
+import database as db
 import pandas as pd
 import streamlit as st
 
-import database as db
-
-
-DB_PATH = "data/ledger.db"
 
 
 def _format_currency(value):
@@ -17,7 +12,7 @@ def _format_currency(value):
 
 
 def _load_categories():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
         return conn.execute("""
             SELECT id, name, flow
             FROM categories
@@ -27,7 +22,7 @@ def _load_categories():
 
 
 def _load_allocation_methods():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
         return conn.execute("""
             SELECT id, name
             FROM allocation_methods
@@ -36,11 +31,12 @@ def _load_allocation_methods():
 
 
 def _load_fiscal_years():
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
         return conn.execute("""
             SELECT fiscal_year_id, start_date, end_date
             FROM fy
         """).fetchall()
+
 
 
 def _date_from_value(value):
@@ -108,12 +104,14 @@ def _load_transactions(fy_id, search_text, category_id):
             l.id DESC
     """
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return pd.read_sql_query(query, conn, params=params)
 
 
 def _load_deleted_transactions(fy_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         return conn.execute("""
             SELECT id, transaction_date, description, amount
             FROM ledger
@@ -305,7 +303,8 @@ def render():
         new_category_id = category_map[new_category] if new_category != "Uncategorized" else None
         new_allocation_id = allocation_map[new_allocation] if new_allocation != "None" else None
 
-        with sqlite3.connect(DB_PATH) as conn:
+        with db.get_connection() as conn:
+
             conn.execute("""
                 UPDATE ledger
                 SET transaction_date = ?,

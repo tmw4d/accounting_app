@@ -5,9 +5,12 @@ import shutil
 import sqlite3
 
 
-DB_PATH = Path("data/ledger.db")
-SYNC_STATE_PATH = Path("data/s3_sync_state.json")
-LOCAL_BACKUP_DIR = Path("data/backups")
+import database as db
+
+DB_PATH = db.DB_PATH
+SYNC_STATE_PATH = db.DATA_DIR / "s3_sync_state.json"
+LOCAL_BACKUP_DIR = db.DATA_DIR / "backups"
+
 
 
 class CloudSyncError(Exception):
@@ -167,3 +170,36 @@ def upload_db_to_s3(config):
     }
     save_sync_state(state)
     return backup_key, remote_info
+
+
+def auto_download_on_startup(secrets):
+    """Automatically download ledger.db from S3 on startup if local DB does not exist."""
+    db.ensure_data_dir()
+    if not DB_PATH.exists():
+        try:
+            config = get_config(secrets)
+            s3 = get_s3_client(config)
+            s3.download_file(config["bucket"], config["db_key"], str(DB_PATH))
+            if sqlite_integrity_check(DB_PATH):
+                remote_info = get_remote_db_info(config)
+                state = {
+                    "bucket": config["bucket"],
+                    "key": config["db_key"],
+                    "downloaded_at": datetime.now(timezone.utc).isoformat(),
+                    "remote_info": remote_info,
+                    "auto_download_on_startup": True,
+                }
+                save_sync_state(state)
+                return True
+            else:
+                if DB_PATH.exists():
+                    DB_PATH.unlink()
+        except Exception:
+            if DB_PATH.exists():
+                try:
+                    DB_PATH.unlink()
+                except Exception:
+                    pass
+            return False
+    return False
+

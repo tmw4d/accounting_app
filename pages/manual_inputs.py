@@ -8,10 +8,9 @@ def render():
     st.title("✍️ Manual Transaction Entry")
     st.write("Record a new manual transaction directly into the ledger. The system will automatically classify its fiscal year and type.")
 
-    db_path = "data/ledger.db"
-
     # Fetch active categories and fiscal years for dropdowns
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         categories = conn.execute("SELECT id, name, flow FROM categories WHERE active_ind = 1 ORDER BY flow, name").fetchall()
         cat_map = {f"{c[2]} - {c[1]}": c[0] for c in categories}
         
@@ -83,7 +82,8 @@ def render():
             
             # Save to database
             try:
-                with sqlite3.connect(db_path) as conn:
+                with db.get_connection() as conn:
+
                     conn.execute("""
                         INSERT INTO ledger (
                             transaction_date, description, amount, transaction_type, check_number,

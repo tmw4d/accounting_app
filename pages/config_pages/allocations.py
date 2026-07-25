@@ -1,5 +1,6 @@
+import database as db
 import streamlit as st
-import sqlite3
+
 
 def render():
     st.subheader("Allocation Management")
@@ -20,7 +21,7 @@ def render():
 
     # 1. List and Delete Existing Methods
     st.write("### Existing Methods")
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         methods = conn.execute("SELECT id, name, description FROM allocation_methods ORDER BY name ASC").fetchall()
 
     if methods:
@@ -34,7 +35,7 @@ def render():
             
             # Delete button (custom red style)
             if col2.button("Delete Method", key=f"del_meth_{mid}", type="primary"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("DELETE FROM allocation_rules WHERE method_id = ?", (mid,))
                     conn.execute("DELETE FROM allocation_methods WHERE id = ?", (mid,))
                 if st.session_state.sel_method_id == mid:
@@ -52,13 +53,13 @@ def render():
             name = st.text_input("Method Name")
             desc = st.text_area("Description")
             if st.form_submit_button("Save Method"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("INSERT INTO allocation_methods (name, description) VALUES (?, ?)", (name, desc))
                 st.rerun()
 
     # 3. Manage Rules
     st.write("### Define Percentages")
-    with sqlite3.connect("data/ledger.db") as conn:
+    with db.get_connection() as conn:
         all_methods = conn.execute("SELECT id, name FROM allocation_methods").fetchall()
         programs = conn.execute("SELECT id, name FROM programs WHERE active_ind = 1").fetchall()
 
@@ -69,15 +70,15 @@ def render():
         if st.session_state.sel_method_id:
             try:
                 selected_idx = list(method_map.values()).index(st.session_state.sel_method_id)
-            except ValueError: pass
+            except ValueError:
+                pass
 
         sel_method = st.selectbox("Select Method to edit", list(method_map.keys()), index=selected_idx)
         m_id = method_map[sel_method]
-        st.session_state.sel_method_id = m_id # Keep session in sync
-
+        st.session_state.sel_method_id = m_id  # Keep session in sync
 
         # Fetch current rules
-        with sqlite3.connect("data/ledger.db") as conn:
+        with db.get_connection() as conn:
             rules = conn.execute("""
                 SELECT r.id, p.name, r.percentage, r.program_id 
                 FROM allocation_rules r
@@ -104,12 +105,12 @@ def render():
             new_pct = cols[1].number_input("Pct", value=pct, key=f"edit_{rid}", label_visibility="collapsed")
             
             if cols[2].button("Update", key=f"upd_{rid}"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("UPDATE allocation_rules SET percentage = ? WHERE id = ?", (new_pct, rid))
                 st.rerun()
                 
             if cols[3].button("Delete", key=f"del_{rid}"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute("DELETE FROM allocation_rules WHERE id = ?", (rid,))
                 st.rerun()
 
@@ -121,7 +122,7 @@ def render():
             pct = c2.number_input("Percentage (0-1)", min_value=0.0, max_value=1.0, step=0.05)
             
             if st.form_submit_button("Add Rule to Method"):
-                with sqlite3.connect("data/ledger.db") as conn:
+                with db.get_connection() as conn:
                     conn.execute(
                         "INSERT INTO allocation_rules (method_id, program_id, percentage) VALUES (?, ?, ?)",
                         (m_id, prog_map[sel_prog], pct)

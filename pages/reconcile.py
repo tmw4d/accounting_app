@@ -1,15 +1,14 @@
-import streamlit as st
-import sqlite3
+import database as db
 import pandas as pd
+import streamlit as st
 
 def render_reconciliation():
     st.title("⚖️ Reconcile Expenses & Income")
     st.write("Review, categorize, and allocate ledger transactions. Focus on pending allocations or bulk-reconcile recurring items.")
 
-    db_path = "data/ledger.db"
-
     # Fetch reference tables for dropdowns and mappings
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         methods = conn.execute("SELECT id, name FROM allocation_methods ORDER BY name").fetchall()
         method_map = {m[1]: m[0] for m in methods}
         
@@ -21,7 +20,8 @@ def render_reconciliation():
     fy_id = st.session_state.selected_fy
 
     # --- 1. METRICS PANEL ---
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         # Get count and sums for progress
         total_stats = conn.execute("""
             SELECT COUNT(*), SUM(amount) FROM ledger 
@@ -60,7 +60,8 @@ def render_reconciliation():
         bulk_keyword = st.text_input("Search Keyword for Bulk Selection", value="TopScore", help="Finds unallocated transactions with descriptions containing this text.")
         
         if bulk_keyword:
-            with sqlite3.connect(db_path) as conn:
+            with db.get_connection() as conn:
+
                 bulk_txns = conn.execute("""
                     SELECT id, transaction_date, description, amount 
                     FROM ledger 
@@ -95,7 +96,8 @@ def render_reconciliation():
                         
                         bulk_ids = [t[0] for t in bulk_txns]
                         
-                        with sqlite3.connect(db_path) as conn:
+                        with db.get_connection() as conn:
+
                             # Build parameterized query for IDs list
                             placeholders = ",".join("?" for _ in bulk_ids)
                             conn.execute(f"""
@@ -168,7 +170,8 @@ def render_reconciliation():
     elif sort_by == "Amount (Smallest First)":
         query += " ORDER BY abs(l.amount) ASC"
 
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         txns = conn.execute(query, params).fetchall()
 
     if not txns:
@@ -263,7 +266,8 @@ def render_reconciliation():
                         method_db_id = method_map[sel_method] if sel_method != "None" else None
                         category_db_id = cat_map[sel_cat] if sel_cat != "Uncategorized" else None
                         
-                        with sqlite3.connect(db_path) as conn:
+                        with db.get_connection() as conn:
+
                             conn.execute("""
                                 UPDATE ledger 
                                 SET allocation_method_id = ?, category_id = ?, notes = ?, more_notes = ?

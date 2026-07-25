@@ -8,10 +8,8 @@ import database as db
 
 def render():
     st.title("📥 Import Bank Files")
-    st.write("Upload a bank statement CSV or select a historical file from the local import folder. Preview records, match pending items, and identify potential duplicates before writing to the ledger.")
+    st.write("Upload a bank statement CSV file. Preview records, match pending items, and identify potential duplicates before writing to the ledger.")
 
-    db_path = "data/ledger.db"
-    import_folder = "bank_import"
 
     # Initialize key versioning for file uploader to allow programmatic resets
     if "uploader_version" not in st.session_state:
@@ -137,39 +135,20 @@ def render():
         except Exception as e:
             return None, f"Error parsing CSV content: {str(e)}"
 
-    # --- A. SELECT FILE SOURCE ---
-    st.write("### 📂 Choose Bank File Source")
-    source_method = st.radio("File Source", ["Select from local 'bank_import' folder", "Upload a new CSV file"], horizontal=True)
+    st.write("### 📂 Upload Bank Statement CSV")
+    uploaded_file = st.file_uploader(
+        "Upload CSV statement", 
+        type=["csv"], 
+        key=f"uploader_{st.session_state.uploader_version}"
+    )
 
-    selected_file_path = None
-    uploaded_file = None
-
-    if source_method == "Select from local 'bank_import' folder":
-        if os.path.exists(import_folder):
-            files = [f for f in os.listdir(import_folder) if f.lower().endswith('.csv')]
-            if files:
-                sel_file = st.selectbox("Available CSV files", sorted(files))
-                selected_file_path = os.path.join(import_folder, sel_file)
-            else:
-                st.info(f"No CSV files found in directory '{import_folder}'.")
-        else:
-            st.warning(f"Directory '{import_folder}' does not exist.")
-    else:
-        uploaded_file = st.file_uploader(
-            "Upload CSV statement", 
-            type=["csv"], 
-            key=f"uploader_{st.session_state.uploader_version}"
-        )
-
-    # Determine what to parse
-    active_source = uploaded_file if source_method == "Upload a new CSV file" else selected_file_path
-
-    if active_source is None:
-        st.info("Please select or upload a bank file to continue.")
+    if uploaded_file is None:
+        st.info("Please upload a bank CSV file to continue.")
         return
 
     # --- B. PARSE CSV ---
-    parsed_data, parse_status = detect_and_parse_csv(active_source)
+    parsed_data, parse_status = detect_and_parse_csv(uploaded_file)
+
 
     if parsed_data is None:
         st.error(parse_status)
@@ -178,7 +157,8 @@ def render():
     st.success(f"Successfully parsed **{len(parsed_data)}** transactions using **{parse_status.replace('_', ' ')}**!")
 
     # Fetch reference mappings from DB
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         categories = conn.execute("SELECT id, name FROM categories").fetchall()
         cat_map = {c[1].lower(): c[0] for c in categories}
         cat_id_name_map = {c[0]: c[1] for c in categories}
@@ -202,7 +182,8 @@ def render():
     min_date = parsed_data['date'].min()
     max_date = parsed_data['date'].max()
 
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         ledger_rows = conn.execute("""
             SELECT id, transaction_date, amount, description, check_number 
             FROM ledger 
@@ -241,7 +222,8 @@ def render():
     } for r in pending_rows]
 
     # Fetch the latest prior import date to run date-based sanity checks
-    with sqlite3.connect(db_path) as conn:
+    with db.get_connection() as conn:
+
         res = conn.execute("""
             SELECT MAX(transaction_date) FROM ledger 
             WHERE source_indicator IN ('Bank', 'Import') AND is_deleted = 0 AND transaction_date != 'pending'
@@ -425,7 +407,8 @@ def render():
         imported_success_count = 0
         removed_pending_count = 0
         
-        with sqlite3.connect(db_path) as conn:
+        with db.get_connection() as conn:
+
             # Fetch active Fiscal Year to fall back to if dates are out of bounds
             active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
             default_fy_id = active_year[0] if active_year else st.session_state.selected_fy

@@ -1,5 +1,6 @@
+import database as db
 import streamlit as st
-import sqlite3
+
 
 def render():
     st.subheader("Program Management")
@@ -15,27 +16,26 @@ def render():
             
             if st.form_submit_button("Save Program"):
                 try:
-                    with sqlite3.connect("data/ledger.db") as conn:
+                    with db.get_connection() as conn:
                         conn.execute(
                             "INSERT INTO programs (name, code, description, active_ind) VALUES (?, ?, ?, ?)",
                             (name, code, desc, 1 if active else 0)
                         )
                     st.success(f"Program '{name}' added!")
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Program name or code already exists.")
+                except Exception as exc:
+                    st.error(f"Error saving program: {exc}")
 
     # List and Delete
     st.write("### Active Programs")
-    with sqlite3.connect("data/ledger.db") as conn:
-        programs = conn.execute("SELECT * FROM programs").fetchall()
+    with db.get_connection() as conn:
+        programs = conn.execute("SELECT id, name, code, description, active_ind FROM programs").fetchall()
         
     for prog in programs:
         pid, name, code, desc, active = prog
         col1, col2 = st.columns([3, 1])
         col1.button(f"**[{code}] {name}**", width="stretch", help=desc if desc else "No description provided")
         if col2.button("Delete", key=f"del_prog_{pid}", type="primary"):
-            with sqlite3.connect("data/ledger.db") as conn:
+            with db.get_connection() as conn:
                 conn.execute("DELETE FROM programs WHERE id = ?", (pid,))
             st.rerun()
-

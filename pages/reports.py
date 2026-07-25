@@ -1,12 +1,8 @@
 from datetime import datetime
 from io import BytesIO
-import sqlite3
-
+import database as db
 import pandas as pd
 import streamlit as st
-
-
-DB_PATH = "data/ledger.db"
 
 
 def _currency(value):
@@ -14,7 +10,7 @@ def _currency(value):
 
 
 def _get_fiscal_year(fy_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
         row = conn.execute("""
             SELECT name, start_date, end_date
             FROM fy
@@ -26,7 +22,8 @@ def _get_fiscal_year(fy_id):
 
 
 def _get_summary(fy_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         first_posted = conn.execute("""
             SELECT amount, daily_posted_balance
             FROM ledger
@@ -65,7 +62,8 @@ def _get_summary(fy_id):
 
 
 def _get_recent_fiscal_years(selected_fy_id, count=2):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         selected = conn.execute("""
             SELECT end_date
             FROM fy
@@ -86,7 +84,8 @@ def _get_recent_fiscal_years(selected_fy_id, count=2):
 
 
 def _get_program_breakdown(fy_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         query = """
             SELECT
                 p.name AS program_name,
@@ -154,7 +153,8 @@ def _get_program_breakdown(fy_id):
 
 
 def _get_category_totals(fy_id):
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         query = """
             SELECT
                 CASE
@@ -190,7 +190,8 @@ def _get_two_year_category_program_breakdown(fy_id):
     fy_ids = [row[0] for row in fiscal_years]
     placeholders = ",".join("?" for _ in fy_ids)
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with db.get_connection() as conn:
+
         query = f"""
             SELECT
                 l.fiscal_year_id,

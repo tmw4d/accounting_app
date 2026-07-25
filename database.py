@@ -1,7 +1,18 @@
 import sqlite3
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+DB_PATH = DATA_DIR / "ledger.db"
+
+
+def ensure_data_dir():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
 
 def get_connection():
-    return sqlite3.connect("data/ledger.db")
+    ensure_data_dir()
+    return sqlite3.connect(DB_PATH)
 
 
 def recalculate_running_balances(conn):
