@@ -55,6 +55,12 @@ def render_dashboard_table():
         """
         df = pd.read_sql_query(query, conn, params=(fy_id,fy_id,))
 
+    if df.empty:
+        st.write("### Financial Breakdown by Program")
+        st.info("No financial data found for the selected fiscal year.")
+        render_topscore_player_counts()
+        return
+
     # 2. Pivot the table
     # Rows: Flow (Income/Expense), Columns: Program
     pivot_df = df.pivot_table(index='flow', columns='program_name', values='total', aggfunc='sum', fill_value=0)

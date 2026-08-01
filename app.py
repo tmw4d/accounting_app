@@ -15,36 +15,43 @@ if "selected_fy" not in st.session_state:
     with db.get_connection() as conn:
         # Default to the active fiscal year
         active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
-        st.session_state.selected_fy = active_year[0] if active_year else 1
+        st.session_state.selected_fy = active_year[0] if active_year else None
 
 def fiscal_year_selector():
     # 1. Fetch available years
     with db.get_connection() as conn:
         years = conn.execute("SELECT fiscal_year_id, name FROM fy ORDER BY name DESC").fetchall()
     
+    if not years:
+        st.sidebar.info("No Fiscal Years configured.")
+        st.session_state.selected_fy = None
+        return None
+
     # 2. Determine default (active) year
     with db.get_connection() as conn:
         active_year = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()
-    default_id = active_year[0] if active_year else (years[0][0] if years else None)
+    default_id = active_year[0] if active_year else years[0][0]
 
-    # 3. Initialize session state
-    if "selected_fy" not in st.session_state:
+    # 3. Build lookup map
+    year_map = {y[1]: y[0] for y in years}
+
+    # Initialize or reset session state if selected_fy is not valid
+    if "selected_fy" not in st.session_state or st.session_state.selected_fy not in year_map.values():
         st.session_state.selected_fy = default_id
 
     # 4. Display Selector
-    year_map = {y[1]: y[0] for y in years}
+    current_name = next((name for name, fy_id in year_map.items() if fy_id == st.session_state.selected_fy), None)
     
-    # Pre-select based on session
-    current_name = next((name for name, id in year_map.items() if id == st.session_state.selected_fy), None)
-    
+    default_index = list(year_map.keys()).index(current_name) if current_name in year_map else 0
+
     selected_name = st.sidebar.selectbox(
         "Select Fiscal Year", 
         list(year_map.keys()), 
-        index=list(year_map.keys()).index(current_name) if current_name else 0
+        index=default_index
     )
     
-    # Update state
-    st.session_state.selected_fy = year_map[selected_name]
+    # Update state safely
+    st.session_state.selected_fy = year_map.get(selected_name)
     return st.session_state.selected_fy
 
 def get_dashboard_summary():
