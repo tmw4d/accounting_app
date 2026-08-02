@@ -1,8 +1,8 @@
 from datetime import date
+import app
 import database as db
 import pandas as pd
 import streamlit as st
-
 
 
 def _format_currency(value):
@@ -33,10 +33,10 @@ def _load_allocation_methods():
 def _load_fiscal_years():
     with db.get_connection() as conn:
         return conn.execute("""
-            SELECT fiscal_year_id, start_date, end_date
+            SELECT fiscal_year_id, name, start_date, end_date
             FROM fy
+            ORDER BY start_date DESC
         """).fetchall()
-
 
 
 def _date_from_value(value):
@@ -48,7 +48,7 @@ def _date_from_value(value):
 
 def _fiscal_year_for_date(date_value, fiscal_years, fallback_fy_id):
     date_str = date_value.isoformat()
-    for fy_id, start_date, end_date in fiscal_years:
+    for fy_id, fy_name, start_date, end_date in fiscal_years:
         if start_date <= date_str <= end_date:
             return fy_id
     return fallback_fy_id
@@ -65,6 +65,8 @@ def _load_transactions(fy_id, search_text, category_id):
             l.check_number,
             l.source_indicator,
             l.category_id,
+            l.fiscal_year_id,
+            fy.name AS fy_name,
             l.allocation_method_id,
             c.name AS category,
             c.flow AS flow,
@@ -73,6 +75,7 @@ def _load_transactions(fy_id, search_text, category_id):
             l.more_notes,
             CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END AS is_pending
         FROM ledger l
+        LEFT JOIN fy ON l.fiscal_year_id = fy.fiscal_year_id
         LEFT JOIN categories c ON l.category_id = c.id
         LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
         WHERE l.fiscal_year_id = ?
@@ -105,13 +108,11 @@ def _load_transactions(fy_id, search_text, category_id):
     """
 
     with db.get_connection() as conn:
-
         return pd.read_sql_query(query, conn, params=params)
 
 
 def _load_deleted_transactions(fy_id):
     with db.get_connection() as conn:
-
         return conn.execute("""
             SELECT id, transaction_date, description, amount
             FROM ledger
@@ -139,6 +140,9 @@ def render():
     category_reverse_map = {category_id: label for label, category_id in category_map.items()}
     allocation_map = {name: method_id for method_id, name in allocation_methods}
     allocation_reverse_map = {method_id: name for name, method_id in allocation_map.items()}
+    
+    fy_map = {fy_name: fy_id_val for fy_id_val, fy_name, start_d, end_d in fiscal_years}
+    fy_reverse_map = {fy_id_val: fy_name for fy_id_val, fy_name, start_d, end_d in fiscal_years}
 
     controls = st.columns([2, 1])
     with controls[0]:
@@ -178,6 +182,7 @@ def render():
     display_df["Status"] = display_df["is_pending"].map({1: "Pending", 0: "Posted"})
     display_df["Date"] = display_df["transaction_date"].replace({"pending": "Pending"})
     display_df["Amount"] = display_df["amount"].apply(_format_currency)
+    display_df["Fiscal Year"] = display_df["fy_name"].fillna("")
     display_df["Category"] = display_df["category"].fillna("Uncategorized")
     display_df["Allocation"] = display_df["allocation_method"].fillna("Unallocated")
     display_df["Check #"] = display_df["check_number"].fillna("")
@@ -195,6 +200,7 @@ def render():
             "description",
             "Amount",
             "Type",
+            "Fiscal Year",
             "Category",
             "Allocation",
             "Check #",
@@ -213,13 +219,20 @@ def render():
         },
     )
 
+    # In Read-Only mode, do not render edit/delete forms
+    if app.is_read_only():
+        st.divider()
+        st.info("🔒 Read-Only Mode: Transaction editing and deletion are disabled.")
+        return
+
     st.divider()
     st.write("### Edit Transaction")
 
     edit_options = {}
     for row in txns.itertuples(index=False):
         date_label = "Pending" if row.transaction_date == "pending" else row.transaction_date
-        edit_options[f"{row.id} | {date_label} | {_format_currency(row.amount)} | {row.description}"] = row.id
+        fy_label = row.fy_name or f"FY{row.fiscal_year_id}"
+        edit_options[f"{row.id} | {date_label} | {fy_label} | {_format_currency(row.amount)} | {row.description}"] = row.id
 
     selected_edit_label = st.selectbox(
         "Select transaction to edit",
@@ -231,6 +244,7 @@ def render():
     is_pending = selected_txn["transaction_date"] == "pending"
     current_category = category_reverse_map.get(selected_txn["category_id"], "Uncategorized")
     current_allocation = allocation_reverse_map.get(selected_txn["allocation_method_id"], "None")
+    current_fy_name = fy_reverse_map.get(selected_txn["fiscal_year_id"], list(fy_map.keys())[0] if fy_map else "")
 
     with st.form(f"edit_transaction_{selected_transaction_id}"):
         c1, c2 = st.columns(2)
@@ -260,6 +274,15 @@ def render():
         new_check_number = c1.text_input(
             "Check / Serial Number",
             value=selected_txn["check_number"] or "",
+        )
+
+        fy_options = list(fy_map.keys())
+        fy_index = fy_options.index(current_fy_name) if current_fy_name in fy_options else 0
+        new_fy_name = c2.selectbox(
+            "Fiscal Year",
+            fy_options,
+            index=fy_index,
+            help="Defaults to transaction's assigned fiscal year. Select another fiscal year to override (e.g. for post-dating or accruals)."
         )
 
         category_options = ["Uncategorized"] + list(category_map.keys())
@@ -299,12 +322,11 @@ def render():
             return
 
         new_date_value = "pending" if new_is_pending else new_date.isoformat()
-        new_fy_id = fy_id if new_is_pending else _fiscal_year_for_date(new_date, fiscal_years, fy_id)
+        new_fy_id = fy_map[new_fy_name]
         new_category_id = category_map[new_category] if new_category != "Uncategorized" else None
         new_allocation_id = allocation_map[new_allocation] if new_allocation != "None" else None
 
         with db.get_connection() as conn:
-
             conn.execute("""
                 UPDATE ledger
                 SET transaction_date = ?,
@@ -337,7 +359,7 @@ def render():
             db.recalculate_running_balances(conn)
             conn.commit()
 
-        st.success("Transaction updated.")
+        st.success(f"Transaction updated and assigned to {new_fy_name}.")
         st.rerun()
 
     with st.expander("Delete this transaction"):

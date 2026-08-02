@@ -1,6 +1,7 @@
 from datetime import datetime
 from io import BytesIO
 import database as db
+import email_service
 import pandas as pd
 import streamlit as st
 
@@ -662,11 +663,100 @@ def render():
             width="stretch",
         )
 
+    st.divider()
+    st.write("### Export & Distribution Options")
+
+    download_col, email_col = st.columns(2)
+
     filename = f"{report_data['fy_name'].replace(' ', '_')}_financial_report.pdf"
-    st.download_button(
-        "Download PDF Report",
-        data=pdf_bytes,
-        file_name=filename,
-        mime="application/pdf",
-        type="primary",
-    )
+
+    with download_col:
+        st.write("#### Download PDF")
+        st.write("Save a local PDF copy of the financial report to your computer.")
+        st.download_button(
+            "Download PDF Report",
+            data=pdf_bytes,
+            file_name=filename,
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+        )
+
+    with email_col:
+        st.write("#### Email Report (AWS SES)")
+        st.write("Send the PDF report directly as an email attachment via AWS Simple Email Service.")
+        
+        recipient_input = st.text_input(
+            "Recipient Email Address",
+            placeholder="e.g. board@domain.org",
+            key="report_recipient_email_input",
+            help="Enter a free-form email address. Address format will be validated before sending."
+        )
+
+        # Real-time email validation feedback as user types
+        if recipient_input:
+            is_valid, err_msg = email_service.validate_email(recipient_input)
+            if not is_valid:
+                st.caption(f"⚠️ {err_msg}")
+            else:
+                st.caption(f"✓ Valid email format: `{recipient_input.strip()}`")
+
+        send_email_clicked = st.button(
+            "Email PDF Report",
+            type="primary",
+            use_container_width=True,
+            key="send_email_report_btn",
+        )
+
+        if send_email_clicked:
+            if not recipient_input:
+                st.error("Please enter a recipient email address before clicking send.")
+            else:
+                is_valid, val_err = email_service.validate_email(recipient_input)
+                if not is_valid:
+                    st.error(f"Cannot send email: {val_err}")
+                else:
+                    with st.spinner("Sending report via AWS SES..."):
+                        subject = f"{report_data['fy_name']} Financial Report"
+                        body_text = (
+                            f"Hello,\n\n"
+                            f"Attached is the financial report for {report_data['fy_name']}.\n\n"
+                            f"Summary Metrics:\n"
+                            f"  - Initial FY Balance: {_currency(report_data['initial'])}\n"
+                            f"  - Latest Posted Balance: {_currency(report_data['posted'])}\n"
+                            f"  - Pending Transactions: {_currency(report_data['pending'])}\n"
+                            f"  - Projected Total: {_currency(report_data['projected'])}\n\n"
+                            f"Best regards,\nAccounting Application"
+                        )
+                        result = email_service.send_report_email(
+                            recipient_email=recipient_input,
+                            subject=subject,
+                            body_text=body_text,
+                            pdf_bytes=pdf_bytes,
+                            filename=filename,
+                        )
+
+                        if result["success"]:
+                            st.success(
+                                f"Report successfully emailed to **{result['recipient']}**! "
+                                f"(AWS SES Message ID: `{result['message_id']}`)"
+                            )
+                        else:
+                            st.error(f"Failed to send email via AWS SES:\n\n{result['error']}")
+
+    with st.expander("AWS SES Diagnostics & Sender Information", expanded=False):
+        try:
+            aws_config = email_service.get_aws_config()
+            st.write(f"- **Configured Sender (`EMAIL_SENDER`):** `{aws_config.get('sender_email') or 'Not configured'}`")
+            st.write(f"- **AWS Region:** `{aws_config.get('region_name')}`")
+            st.write(f"- **Access Key ID:** `{aws_config.get('aws_access_key_id')[:6]}...`")
+
+            ses_status = email_service.verify_ses_capability()
+            if ses_status["ok"]:
+                st.success("AWS SES client initialized successfully.")
+                if "verified_identities" in ses_status:
+                    st.write(f"- **Verified Identities in SES:** `{ses_status['verified_identities']}`")
+            else:
+                st.warning(f"AWS SES Status Alert: {ses_status.get('error')}")
+        except Exception as exc:
+            st.error(f"Could not load AWS SES configuration: {exc}")

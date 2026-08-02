@@ -1,5 +1,5 @@
 import streamlit as st
-
+import app
 import cloud_sync
 
 
@@ -25,7 +25,7 @@ def _load_config():
 
 def render():
     st.title("Cloud Sync")
-    st.write("Manually sync the local SQLite database with an S3 copy. Use this as backup/sync storage, not as a live multi-user database.")
+    st.write("Manually sync the local SQLite database with an S3 copy.")
 
     config = _load_config()
     if not config:
@@ -79,18 +79,32 @@ def render():
 
     st.divider()
     st.write("### Actions")
-    st.warning("Download replaces the local database after making a local backup. Upload creates an S3 backup before replacing the main S3 database object.")
 
+    if app.is_read_only():
+        st.info("🔒 **Read-Only Mode Active**: Database uploads to S3 and local disk backups are disabled. You can download the latest ledger copy from S3 below.")
+        if st.button("Download From S3", use_container_width=True, type="primary"):
+            try:
+                backup_path, new_remote_info = cloud_sync.download_db_from_s3(config)
+                st.success("Downloaded S3 database.")
+                st.json(new_remote_info)
+                st.rerun()
+            except cloud_sync.CloudSyncError as exc:
+                st.error(str(exc))
+            except Exception as exc:
+                st.error(f"Download failed: {exc}")
+        return
+
+    st.warning("Download replaces the local database after making a local backup. Upload creates an S3 backup before replacing the main S3 database object.")
     a1, a2, a3 = st.columns(3)
 
-    if a1.button("Create Local Backup", width="stretch"):
+    if a1.button("Create Local Backup", use_container_width=True):
         try:
             backup_path = cloud_sync.backup_local_db_to_disk()
             st.success(f"Created local backup: `{backup_path}`")
         except cloud_sync.CloudSyncError as exc:
             st.error(str(exc))
 
-    if a2.button("Download From S3", width="stretch"):
+    if a2.button("Download From S3", use_container_width=True):
         try:
             backup_path, new_remote_info = cloud_sync.download_db_from_s3(config)
             if backup_path:
@@ -104,7 +118,7 @@ def render():
         except Exception as exc:
             st.error(f"Download failed: {exc}")
 
-    if a3.button("Upload To S3", width="stretch"):
+    if a3.button("Upload To S3", use_container_width=True):
         try:
             backup_key, new_remote_info = cloud_sync.upload_db_to_s3(config)
             st.success(f"Uploaded local database to S3. Backup created first: `s3://{config['bucket']}/{backup_key}`")
