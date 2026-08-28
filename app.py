@@ -126,6 +126,24 @@ def main():
             "Configuration"
         ]
 
+
+    # 1. Check if the user is authenticated
+#    if not st.user.is_logged_in:
+#        # Prompt the user to log in if they haven't already
+#        st.write("Please log in to access the application.")
+    if st.button("Log in with Google"):
+        st.login("google")
+#        st.stop()  # Stop executing the rest of the page for unauthenticated users
+
+    # 2. If logged in, display the welcome message using st.user attributes
+    st.title(f"Welcome, {st.user}!")
+    st.write(f"Logged in as: {st.user}")
+
+    # 3. Provide a logout option
+    if st.button("Log out"):
+        st.logout()
+
+
     page = st.sidebar.radio("Navigate to:", nav_options)
 
     if page == "Dashboard":
