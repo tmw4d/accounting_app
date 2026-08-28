@@ -167,8 +167,8 @@ def main():
         from pages import reports
         reports.render()
     elif page == "Cloud Sync":
-        from pages import cloud_sync
-        cloud_sync.render()
+        from pages import cloud_sync as cloud_sync_page
+        cloud_sync_page.render()
     elif page == "Reconcile Expenses":
         from pages import reconcile
         reconcile.render_reconciliation()
