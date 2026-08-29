@@ -131,8 +131,8 @@ def main():
 #    if not st.user.is_logged_in:
 #        # Prompt the user to log in if they haven't already
 #        st.write("Please log in to access the application.")
-    if st.button("Log in with Google"):
-        st.login("google")
+#    if st.button("Log in with Google"):
+#        st.login("google")
 #        st.stop()  # Stop executing the rest of the page for unauthenticated users
 
     # 2. If logged in, display the welcome message using st.user attributes
@@ -184,4 +184,12 @@ def main():
 
 
 if __name__ == "__main__":
+    # --- 1. Authentication Gatekeeper ---
+    if not st.user.is_logged_in:
+        st.title("🔐 Authentication Required")
+        st.write("Please log in with your Google account to access the generator.")
+        st.button("Log in with Google", on_click=st.login)
+        st.stop()  # Prevents downstream code execution until authenticated
+
+    # --- 2. Authenticated Application Logic ---
     main()
