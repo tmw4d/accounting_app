@@ -22,7 +22,31 @@ FINANCIAL_PROGRAM_ORDER = [
 ]
 
 
+def render_unreconciled_alert():
+    fy_id = st.session_state.selected_fy
+    with db.get_connection() as conn:
+        unrec_txns = conn.execute("""
+            SELECT id, transaction_date, description, amount
+            FROM ledger
+            WHERE fiscal_year_id = ? AND is_deleted = 0 AND allocation_method_id IS NULL
+            ORDER BY transaction_date DESC, id DESC
+        """, (fy_id,)).fetchall()
+
+    if unrec_txns:
+        unrec_count = len(unrec_txns)
+        unrec_sum = sum(t[3] for t in unrec_txns)
+        st.warning(
+            f"⚠️ **{unrec_count} Unreconciled Transaction(s)** totaling **${unrec_sum:,.2f}** require allocation in this fiscal year."
+        )
+        with st.expander(f"View {unrec_count} Unreconciled Transaction(s)", expanded=False):
+            df = pd.DataFrame(unrec_txns, columns=["ID", "Date", "Description", "Amount"])
+            df["Amount"] = df["Amount"].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(df[["Date", "Description", "Amount"]], width="stretch", hide_index=True)
+
+
 def render_dashboard_table():
+    render_unreconciled_alert()
+
     fy_id = st.session_state.selected_fy
     
     with db.get_connection() as conn:
@@ -33,10 +57,12 @@ def render_dashboard_table():
                 CASE
                     WHEN lower(c.flow) = 'income' THEN 'Income'
                     WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    ELSE 'Uncategorized'
+                    WHEN l.amount >= 0 THEN 'Income'
+                    ELSE 'Expense'
                 END as flow,
                 CASE 
-                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount * ifnull(ar.percentage,0))
+                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
+                    THEN - SUM(l.amount * ifnull(ar.percentage,0))
                     ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
                 END as total
             FROM ledger l
@@ -54,10 +80,12 @@ def render_dashboard_table():
                 CASE
                     WHEN lower(c.flow) = 'income' THEN 'Income'
                     WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    ELSE 'Uncategorized'
+                    WHEN l.amount >= 0 THEN 'Income'
+                    ELSE 'Expense'
                 END as flow,
                 CASE 
-                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount)
+                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
+                    THEN - SUM(l.amount)
                     ELSE SUM(l.amount) 
                 END as total
             FROM ledger l

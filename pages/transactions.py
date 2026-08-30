@@ -377,6 +377,78 @@ def render():
             st.rerun()
 
     st.divider()
+    st.write("### Bulk Edit Transactions")
+    with st.expander("Reassign Fiscal Year or Update Multiple Transactions in Bulk", expanded=False):
+        bulk_txn_options = {}
+        for row in txns.itertuples(index=False):
+            date_label = "Pending" if row.transaction_date == "pending" else row.transaction_date
+            fy_label = row.fy_name or f"FY{row.fiscal_year_id}"
+            bulk_txn_options[f"[{row.id}] {date_label} | {fy_label} | {_format_currency(row.amount)} | {row.description}"] = row.id
+
+        selected_bulk_labels = st.multiselect(
+            "Select transactions to bulk edit",
+            options=list(bulk_txn_options.keys()),
+            help="Select one or more transactions from the current fiscal year view."
+        )
+
+        if selected_bulk_labels:
+            selected_bulk_ids = [bulk_txn_options[label] for label in selected_bulk_labels]
+            st.info(f"Selected **{len(selected_bulk_ids)}** transaction(s) for bulk edit.")
+
+            with st.form("bulk_edit_transactions_form"):
+                bc1, bc2 = st.columns(2)
+                
+                bulk_fy_name = bc1.selectbox(
+                    "Reassign Fiscal Year",
+                    ["(No Change)"] + list(fy_map.keys()),
+                    help="Select a new Fiscal Year to move all selected transactions to that fiscal year."
+                )
+                bulk_cat_name = bc1.selectbox(
+                    "Update Category",
+                    ["(No Change)", "Uncategorized"] + list(category_map.keys())
+                )
+                bulk_alloc_name = bc2.selectbox(
+                    "Update Allocation Method",
+                    ["(No Change)", "None"] + list(allocation_map.keys())
+                )
+                bulk_notes = bc2.text_input("Set Primary Note (applies to all selected)", value="")
+
+                if st.form_submit_button(f"Apply Bulk Updates to {len(selected_bulk_ids)} Transaction(s)", type="primary"):
+                    updates = []
+                    params = []
+
+                    if bulk_fy_name != "(No Change)":
+                        updates.append("fiscal_year_id = ?")
+                        params.append(fy_map[bulk_fy_name])
+
+                    if bulk_cat_name != "(No Change)":
+                        updates.append("category_id = ?")
+                        params.append(category_map[bulk_cat_name] if bulk_cat_name != "Uncategorized" else None)
+
+                    if bulk_alloc_name != "(No Change)":
+                        updates.append("allocation_method_id = ?")
+                        params.append(allocation_map[bulk_alloc_name] if bulk_alloc_name != "None" else None)
+
+                    if bulk_notes.strip():
+                        updates.append("notes = ?")
+                        params.append(bulk_notes.strip())
+
+                    if not updates:
+                        st.warning("No fields were selected for update.")
+                    else:
+                        placeholders = ",".join("?" for _ in selected_bulk_ids)
+                        query_str = f"UPDATE ledger SET {', '.join(updates)} WHERE id IN ({placeholders}) AND is_deleted = 0"
+                        params.extend(selected_bulk_ids)
+
+                        with db.get_connection() as conn:
+                            conn.execute(query_str, params)
+                            db.recalculate_running_balances(conn)
+                            conn.commit()
+
+                        st.success(f"Successfully updated {len(selected_bulk_ids)} transaction(s)!")
+                        st.rerun()
+
+    st.divider()
     with st.expander("Restore a deleted transaction"):
         deleted_transactions = _load_deleted_transactions(fy_id)
         if not deleted_transactions:

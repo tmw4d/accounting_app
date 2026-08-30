@@ -17,6 +17,9 @@ def render_reconciliation():
         cat_map = {f"{c[2]} - {c[1]}": c[0] for c in categories}
         cat_reverse_map = {c[0]: f"{c[2]} - {c[1]}" for c in categories}
 
+        fiscal_years = conn.execute("SELECT fiscal_year_id, name FROM fy ORDER BY start_date DESC").fetchall()
+        fy_map = {f[1]: f[0] for f in fiscal_years}
+
     fy_id = st.session_state.selected_fy
 
     # --- 1. METRICS PANEL ---
@@ -82,10 +85,11 @@ def render_reconciliation():
                 
                 st.write("#### Apply Reconciliation values to all matching transactions:")
                 with st.form("bulk_reconcile_form"):
-                    bc1, bc2 = st.columns(2)
+                    bc1, bc2, bc3 = st.columns(3)
                     
                     bulk_method = bc1.selectbox("Select Allocation Method", ["None"] + list(method_map.keys()), key="bulk_meth_sel")
                     bulk_cat = bc2.selectbox("Select Category", ["Uncategorized"] + list(cat_map.keys()), key="bulk_cat_sel")
+                    bulk_fy = bc3.selectbox("Fiscal Year", ["Keep Current FY"] + list(fy_map.keys()), key="bulk_fy_sel")
                     
                     bulk_note = bc1.text_input("Notes (applies to all)", value=f"Bulk Reconciled - {bulk_keyword}")
                     bulk_more_note = bc2.text_area("More Notes", value="", height=68)
@@ -93,6 +97,7 @@ def render_reconciliation():
                     if st.form_submit_button(f"Apply changes to all {len(bulk_txns)} matching transactions"):
                         method_db_id = method_map[bulk_method] if bulk_method != "None" else None
                         category_db_id = cat_map[bulk_cat] if bulk_cat != "Uncategorized" else None
+                        target_fy_id = fy_map[bulk_fy] if bulk_fy != "Keep Current FY" else None
                         
                         bulk_ids = [t[0] for t in bulk_txns]
                         
@@ -100,11 +105,20 @@ def render_reconciliation():
 
                             # Build parameterized query for IDs list
                             placeholders = ",".join("?" for _ in bulk_ids)
-                            conn.execute(f"""
-                                UPDATE ledger 
-                                SET allocation_method_id = ?, category_id = ?, notes = ?, more_notes = ?
-                                WHERE id IN ({placeholders})
-                            """, (method_db_id, category_db_id, bulk_note, bulk_more_note, *bulk_ids))
+                            if target_fy_id is not None:
+                                conn.execute(f"""
+                                    UPDATE ledger 
+                                    SET allocation_method_id = ?, category_id = ?, fiscal_year_id = ?, notes = ?, more_notes = ?
+                                    WHERE id IN ({placeholders})
+                                """, (method_db_id, category_db_id, target_fy_id, bulk_note, bulk_more_note, *bulk_ids))
+                            else:
+                                conn.execute(f"""
+                                    UPDATE ledger 
+                                    SET allocation_method_id = ?, category_id = ?, notes = ?, more_notes = ?
+                                    WHERE id IN ({placeholders})
+                                """, (method_db_id, category_db_id, bulk_note, bulk_more_note, *bulk_ids))
+                            db.recalculate_running_balances(conn)
+                            conn.commit()
                         
                         st.success(f"Successfully reconciled {len(bulk_txns)} transactions!")
                         st.rerun()
