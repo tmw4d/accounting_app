@@ -152,8 +152,10 @@ def render_reconciliation():
         SELECT 
             l.id, l.transaction_date, l.description, l.amount, l.transaction_type, 
             l.check_number, l.source_indicator, l.notes, l.more_notes, 
-            l.category_id, l.allocation_method_id, am.name as method_name
+            l.category_id, l.allocation_method_id, am.name as method_name,
+            l.fiscal_year_id, fy.name as fy_name
         FROM ledger l
+        LEFT JOIN fy ON l.fiscal_year_id = fy.fiscal_year_id
         LEFT JOIN categories c ON l.category_id = c.id
         LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
         WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
@@ -207,9 +209,11 @@ def render_reconciliation():
     end_idx = min(start_idx + page_size, total_txns)
     paginated_txns = txns[start_idx:end_idx]
 
+    fy_reverse_map = {v: k for k, v in fy_map.items()}
+
     # --- 5. RENDER TRANSACTION CARDS ---
     for txn in paginated_txns:
-        tid, tdate, desc, amt, tx_type, check_num, src_ind, notes, more_notes, category_id, alloc_method_id, method_name = txn
+        tid, tdate, desc, amt, tx_type, check_num, src_ind, notes, more_notes, category_id, alloc_method_id, method_name, txn_fy_id, fy_name = txn
         
         # Color coding for amounts
         amt_color = "red" if amt < 0 else "green"
@@ -244,7 +248,7 @@ def render_reconciliation():
             # Reconciliation form for this transaction card
             with st.expander("✏️ Reconcile / Edit Transaction Details", expanded=False):
                 with st.form(f"form_card_{tid}"):
-                    c1, c2 = st.columns(2)
+                    c1, c2, c3 = st.columns(3)
                     
                     # Allocation select index
                     method_idx = 0
@@ -272,6 +276,17 @@ def render_reconciliation():
                         index=category_idx,
                         key=f"sel_cat_{tid}"
                     )
+
+                    # Fiscal Year select index
+                    current_fy_name = fy_name or fy_reverse_map.get(txn_fy_id, list(fy_map.keys())[0] if fy_map else "")
+                    fy_options = list(fy_map.keys())
+                    fy_idx = fy_options.index(current_fy_name) if current_fy_name in fy_options else 0
+                    sel_fy = c3.selectbox(
+                        "Fiscal Year",
+                        fy_options,
+                        index=fy_idx,
+                        key=f"sel_fy_{tid}"
+                    )
                     
                     notes_val = c1.text_input("Primary Note", value=notes or "", key=f"note_{tid}")
                     more_notes_val = c2.text_area("Extended Notes", value=more_notes or "", key=f"more_note_{tid}", height=68)
@@ -279,14 +294,16 @@ def render_reconciliation():
                     if st.form_submit_button("Save Allocation"):
                         method_db_id = method_map[sel_method] if sel_method != "None" else None
                         category_db_id = cat_map[sel_cat] if sel_cat != "Uncategorized" else None
+                        target_fy_id = fy_map[sel_fy]
                         
                         with db.get_connection() as conn:
-
                             conn.execute("""
                                 UPDATE ledger 
-                                SET allocation_method_id = ?, category_id = ?, notes = ?, more_notes = ?
+                                SET allocation_method_id = ?, category_id = ?, fiscal_year_id = ?, notes = ?, more_notes = ?
                                 WHERE id = ?
-                            """, (method_db_id, category_db_id, notes_val, more_notes_val, tid))
+                            """, (method_db_id, category_db_id, target_fy_id, notes_val, more_notes_val, tid))
+                            db.recalculate_running_balances(conn)
+                            conn.commit()
                             
                         st.success("Reconciliation saved!")
                         st.rerun()
