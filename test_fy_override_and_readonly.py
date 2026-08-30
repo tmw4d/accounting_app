@@ -164,6 +164,40 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
         self.assertAlmostEqual(pivot_df.loc['Expense', 'Total'], 125179.89, places=2)
         self.assertAlmostEqual(pivot_df.loc['Total', 'Total'], -6544.00, places=2)
 
+    def test_fiscal_year_active_and_deletion_guard(self):
+        with db.get_connection() as conn:
+            # 1. Insert a temporary FY
+            conn.execute(
+                "INSERT INTO fy (name, start_date, end_date, active_ind) VALUES ('FY2099', '2099-01-01', '2099-12-31', 0)"
+            )
+            fy_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+
+            # 2. Test setting active
+            conn.execute("UPDATE fy SET active_ind = 0")
+            conn.execute("UPDATE fy SET active_ind = 1 WHERE fiscal_year_id = ?", (fy_id,))
+            conn.commit()
+
+            active_id = conn.execute("SELECT fiscal_year_id FROM fy WHERE active_ind = 1").fetchone()[0]
+            self.assertEqual(active_id, fy_id, "Expected FY2099 to be set active")
+
+            # 3. Test transaction count guard
+            conn.execute("""
+                INSERT INTO ledger (transaction_date, description, amount, source_indicator, fiscal_year_id, is_deleted)
+                VALUES ('2099-05-01', 'Test Txn FY2099', 100.0, 'Manual', ?, 0)
+            """, (fy_id,))
+            txn_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.commit()
+
+            count = conn.execute("SELECT COUNT(*) FROM ledger WHERE fiscal_year_id = ?", (fy_id,)).fetchone()[0]
+            self.assertEqual(count, 1, "Expected 1 transaction associated with FY2099")
+
+            # Clean up test data
+            conn.execute("DELETE FROM ledger WHERE id = ?", (txn_id,))
+            conn.execute("DELETE FROM fy WHERE fiscal_year_id = ?", (fy_id,))
+            conn.execute("UPDATE fy SET active_ind = 1 WHERE name = 'FY2026'")
+            conn.commit()
+
 
 if __name__ == "__main__":
     unittest.main()
