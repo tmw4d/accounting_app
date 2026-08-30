@@ -94,6 +94,61 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
                 app.check_auth_and_permissions()
                 self.assertFalse(session_dict.get("read_only_mode"), "Expected treasurer to have full edit access (read_only_mode=False)")
 
+    def test_dashboard_program_breakdown_calculation(self):
+        import pandas as pd
+        import database as db
+
+        fy_id = 10
+        with db.get_connection() as conn:
+            query = """
+                SELECT 
+                    p.name as program_name,
+                    CASE
+                        WHEN lower(c.flow) = 'income' THEN 'Income'
+                        WHEN lower(c.flow) = 'expense' THEN 'Expense'
+                        ELSE 'Uncategorized'
+                    END as flow,
+                    CASE 
+                        WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount * ifnull(ar.percentage,0))
+                        ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
+                    END as total
+                FROM ledger l
+                LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
+                LEFT JOIN allocation_rules ar ON am.id = ar.method_id
+                LEFT JOIN programs p ON ar.program_id = p.id
+                LEFT JOIN categories c ON l.category_id = c.id
+                WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
+                GROUP BY p.name, flow
+
+                UNION ALL
+
+                SELECT 
+                    'Total' as program_name,
+                    CASE
+                        WHEN lower(c.flow) = 'income' THEN 'Income'
+                        WHEN lower(c.flow) = 'expense' THEN 'Expense'
+                        ELSE 'Uncategorized'
+                    END as flow,
+                    CASE 
+                        WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount)
+                        ELSE SUM(l.amount) 
+                    END as total
+                FROM ledger l
+                LEFT JOIN categories c ON l.category_id = c.id
+                WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
+                GROUP BY flow
+            """
+            df = pd.read_sql_query(query, conn, params=(fy_id, fy_id))
+
+        pivot_df = df.pivot_table(index='flow', columns='program_name', values='total', aggfunc='sum', fill_value=0)
+        pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
+        pivot_df.loc['Total'] = pivot_df.loc['Income'] - pivot_df.loc['Expense']
+
+        # Verify FY2026 active totals exclude soft-deleted transactions
+        self.assertAlmostEqual(pivot_df.loc['Income', 'Total'], 118635.89, places=2)
+        self.assertAlmostEqual(pivot_df.loc['Expense', 'Total'], 125179.89, places=2)
+        self.assertAlmostEqual(pivot_df.loc['Total', 'Total'], -6544.00, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

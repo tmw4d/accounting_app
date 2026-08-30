@@ -30,30 +30,42 @@ def render_dashboard_table():
         query = """
             SELECT 
                 p.name as program_name,
-                ifnull(c.flow, 'Uncategorized') as flow,
-                case when c.flow = 'expense' 
-                    then - SUM(l.amount * ifnull(ar.percentage,0))
-                    else SUM(l.amount * ifnull(ar.percentage,0)) 
-                    end as total
+                CASE
+                    WHEN lower(c.flow) = 'income' THEN 'Income'
+                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
+                    ELSE 'Uncategorized'
+                END as flow,
+                CASE 
+                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount * ifnull(ar.percentage,0))
+                    ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
+                END as total
             FROM ledger l
-            left join allocation_methods am on l.allocation_method_id = am.id
-            left join allocation_rules ar on am.id = ar.method_id
-            left JOIN programs p ON ar.program_id = p.id
-            left JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ?
-            GROUP BY p.name, c.flow
-            union all
+            LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
+            LEFT JOIN allocation_rules ar ON am.id = ar.method_id
+            LEFT JOIN programs p ON ar.program_id = p.id
+            LEFT JOIN categories c ON l.category_id = c.id
+            WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
+            GROUP BY p.name, flow
+
+            UNION ALL
+
             SELECT 
                 'Total' as program_name,
-                ifnull(c.flow, 'Uncategorized') as flow,
-                SUM(l.amount) as total
+                CASE
+                    WHEN lower(c.flow) = 'income' THEN 'Income'
+                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
+                    ELSE 'Uncategorized'
+                END as flow,
+                CASE 
+                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount)
+                    ELSE SUM(l.amount) 
+                END as total
             FROM ledger l
-            left JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ?
-            GROUP BY c.flow
-
+            LEFT JOIN categories c ON l.category_id = c.id
+            WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
+            GROUP BY flow
         """
-        df = pd.read_sql_query(query, conn, params=(fy_id,fy_id,))
+        df = pd.read_sql_query(query, conn, params=(fy_id, fy_id))
 
     if df.empty:
         st.write("### Financial Breakdown by Program")
@@ -65,13 +77,16 @@ def render_dashboard_table():
     # Rows: Flow (Income/Expense), Columns: Program
     pivot_df = df.pivot_table(index='flow', columns='program_name', values='total', aggfunc='sum', fill_value=0)
     
-    # 3. Add "All Programs" Column (Sum across rows)
-    pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
+    # 3. Add "Unallocated" Column
+    if "Total" in pivot_df.columns:
+        pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
 
-    
-    # 4. Calculate Total Row (Income - Expense)
-    # We treat Income as positive and Expense as negative based on your flow logic
-    pivot_df.loc['Total'] = pivot_df.loc['Income'] + pivot_df.loc['Expense']
+    for flow_row in ["Income", "Expense"]:
+        if flow_row not in pivot_df.index:
+            pivot_df.loc[flow_row] = 0
+
+    # 4. Calculate Net Total Row (Income - Expense)
+    pivot_df.loc['Total'] = pivot_df.loc['Income'] - pivot_df.loc['Expense']
     
     # Reorder index so Income is first
     pivot_df = pivot_df.reindex(['Income', 'Expense', 'Total'])
