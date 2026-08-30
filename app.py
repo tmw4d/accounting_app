@@ -21,7 +21,7 @@ def is_read_only():
 
 
 def check_auth_and_permissions():
-    """Validates user authentication, domain restriction (@yula-ulti.org), and sets read-only permissions."""
+    """Validates user authentication, domain restriction (@yula-ulti.org), allowed emails list, and sets read-only permissions."""
     if not hasattr(st, "user") or not st.user.is_logged_in:
         st.title("🔐 Authentication Required")
         st.write("Please log in with your Google account to access the Accounting System.")
@@ -37,6 +37,7 @@ def check_auth_and_permissions():
     # Configuration defaults
     allowed_domain = "yula-ulti.org"
     admin_emails = ["treasurer@yula-ulti.org"]
+    allowed_emails = []
 
     try:
         if hasattr(st, "secrets"):
@@ -48,25 +49,38 @@ def check_auth_and_permissions():
                     admin_emails = [e.strip() for e in raw_admins.split(",")]
                 elif isinstance(raw_admins, (list, tuple)):
                     admin_emails = list(raw_admins)
+            if "ALLOWED_EMAILS" in st.secrets:
+                raw_allowed = st.secrets["ALLOWED_EMAILS"]
+                if isinstance(raw_allowed, str):
+                    allowed_emails = [e.strip() for e in raw_allowed.split(",")]
+                elif isinstance(raw_allowed, (list, tuple)):
+                    allowed_emails = list(raw_allowed)
     except Exception:
         pass
 
     allowed_domain = allowed_domain.strip().lower()
     admin_emails = [e.strip().lower() for e in admin_emails]
+    allowed_emails = [e.strip().lower() for e in allowed_emails]
 
-    # Validate email domain restriction
-    if not user_email.endswith(f"@{allowed_domain}"):
+    # Check authorization:
+    # 1. Admin emails -> Edit access
+    # 2. Allowed domain (@yula-ulti.org) OR Allowed emails list -> Read-Only access
+    is_admin = user_email in admin_emails
+    is_domain_allowed = allowed_domain and user_email.endswith(f"@{allowed_domain}")
+    is_email_allowed = user_email in allowed_emails
+
+    if not (is_admin or is_domain_allowed or is_email_allowed):
         st.title("🚫 Access Denied")
         st.error(
             f"Your account ({user_email}) is not authorized to access this application. "
-            f"Only user accounts ending with @{allowed_domain} are permitted."
+            f"Only accounts from @{allowed_domain} or authorized email addresses are permitted."
         )
         if st.button("Log out"):
             st.logout()
         st.stop()
 
     # Determine read-only mode based on user email
-    if user_email in admin_emails:
+    if is_admin:
         st.session_state["read_only_mode"] = False
     else:
         st.session_state["read_only_mode"] = True

@@ -94,6 +94,17 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
                 app.check_auth_and_permissions()
                 self.assertFalse(session_dict.get("read_only_mode"), "Expected treasurer to have full edit access (read_only_mode=False)")
 
+            # 5. Authenticated external email outside domain in ALLOWED_EMAILS -> read_only_mode = True
+            session_dict = {}
+            mock_secrets = {"ALLOWED_DOMAIN": "yula-ulti.org", "ALLOWED_EMAILS": ["external_auditor@gmail.com"]}
+            with patch.object(st, "session_state", session_dict), patch.object(st, "secrets", mock_secrets, create=True):
+                mock_user.is_logged_in = True
+                mock_user.email = "external_auditor@gmail.com"
+                mock_stop.reset_mock()
+                app.check_auth_and_permissions()
+                mock_stop.assert_not_called()
+                self.assertTrue(session_dict.get("read_only_mode"), "Expected external allowed email to be granted read-only access")
+
     def test_dashboard_program_breakdown_calculation(self):
         import pandas as pd
         import database as db
