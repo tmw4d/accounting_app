@@ -59,8 +59,13 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
 
         mock_user = MagicMock()
         mock_stop = MagicMock()
+        mock_secrets = {
+            "ALLOWED_DOMAIN": "example.org",
+            "ADMIN_EMAILS": ["admin@example.org"],
+            "ALLOWED_EMAILS": ["external_auditor@example.com"],
+        }
 
-        with patch.object(st, "user", mock_user, create=True), patch.object(st, "stop", mock_stop):
+        with patch.object(st, "user", mock_user, create=True), patch.object(st, "stop", mock_stop), patch.object(st, "secrets", mock_secrets, create=True):
             # 1. Unauthenticated user -> triggers stop
             mock_user.is_logged_in = False
             app.check_auth_and_permissions()
@@ -78,28 +83,27 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
             # Reset mock
             mock_stop.reset_mock()
 
-            # 3. Authenticated standard user from @yula-ulti.org -> read_only_mode = True
+            # 3. Authenticated standard user from allowed domain -> read_only_mode = True
             session_dict = {}
             with patch.object(st, "session_state", session_dict):
                 mock_user.is_logged_in = True
-                mock_user.email = "member@yula-ulti.org"
+                mock_user.email = "member@example.org"
                 app.check_auth_and_permissions()
                 self.assertTrue(session_dict.get("read_only_mode"), "Expected standard domain user to be read-only")
 
-            # 4. Authenticated treasurer from @yula-ulti.org -> read_only_mode = False
+            # 4. Authenticated admin from ADMIN_EMAILS -> read_only_mode = False
             session_dict = {}
             with patch.object(st, "session_state", session_dict):
                 mock_user.is_logged_in = True
-                mock_user.email = "treasurer@yula-ulti.org"
+                mock_user.email = "admin@example.org"
                 app.check_auth_and_permissions()
-                self.assertFalse(session_dict.get("read_only_mode"), "Expected treasurer to have full edit access (read_only_mode=False)")
+                self.assertFalse(session_dict.get("read_only_mode"), "Expected admin to have full edit access (read_only_mode=False)")
 
             # 5. Authenticated external email outside domain in ALLOWED_EMAILS -> read_only_mode = True
             session_dict = {}
-            mock_secrets = {"ALLOWED_DOMAIN": "yula-ulti.org", "ALLOWED_EMAILS": ["external_auditor@gmail.com"]}
-            with patch.object(st, "session_state", session_dict), patch.object(st, "secrets", mock_secrets, create=True):
+            with patch.object(st, "session_state", session_dict):
                 mock_user.is_logged_in = True
-                mock_user.email = "external_auditor@gmail.com"
+                mock_user.email = "external_auditor@example.com"
                 mock_stop.reset_mock()
                 app.check_auth_and_permissions()
                 mock_stop.assert_not_called()
