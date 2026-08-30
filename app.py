@@ -6,8 +6,11 @@ import cloud_sync
 
 def is_read_only():
     """Returns True if the application is running in read-only mode."""
-    if st.session_state.get("read_only_mode", False):
-        return True
+    try:
+        if "read_only_mode" in st.session_state:
+            return bool(st.session_state["read_only_mode"])
+    except Exception:
+        pass
     try:
         if hasattr(st, "secrets") and st.secrets.get("READ_ONLY", False):
             return True
@@ -15,6 +18,58 @@ def is_read_only():
         pass
     env_val = os.getenv("READ_ONLY", "").lower()
     return env_val in ("true", "1", "yes")
+
+
+def check_auth_and_permissions():
+    """Validates user authentication, domain restriction (@yula-ulti.org), and sets read-only permissions."""
+    if not hasattr(st, "user") or not st.user.is_logged_in:
+        st.title("🔐 Authentication Required")
+        st.write("Please log in with your Google account to access the Accounting System.")
+        if hasattr(st, "login"):
+            st.button("Log in with Google", on_click=st.login)
+        else:
+            st.button("Log in with Google")
+        st.stop()  # Stop execution until authenticated
+
+    # Get user email
+    user_email = (getattr(st.user, "email", "") or str(st.user)).strip().lower()
+
+    # Configuration defaults
+    allowed_domain = "yula-ulti.org"
+    admin_emails = ["treasurer@yula-ulti.org"]
+
+    try:
+        if hasattr(st, "secrets"):
+            if "ALLOWED_DOMAIN" in st.secrets:
+                allowed_domain = st.secrets["ALLOWED_DOMAIN"]
+            if "ADMIN_EMAILS" in st.secrets:
+                raw_admins = st.secrets["ADMIN_EMAILS"]
+                if isinstance(raw_admins, str):
+                    admin_emails = [e.strip() for e in raw_admins.split(",")]
+                elif isinstance(raw_admins, (list, tuple)):
+                    admin_emails = list(raw_admins)
+    except Exception:
+        pass
+
+    allowed_domain = allowed_domain.strip().lower()
+    admin_emails = [e.strip().lower() for e in admin_emails]
+
+    # Validate email domain restriction
+    if not user_email.endswith(f"@{allowed_domain}"):
+        st.title("🚫 Access Denied")
+        st.error(
+            f"Your account ({user_email}) is not authorized to access this application. "
+            f"Only user accounts ending with @{allowed_domain} are permitted."
+        )
+        if st.button("Log out"):
+            st.logout()
+        st.stop()
+
+    # Determine read-only mode based on user email
+    if user_email in admin_emails:
+        st.session_state["read_only_mode"] = False
+    else:
+        st.session_state["read_only_mode"] = True
 
 
 def fiscal_year_selector():
@@ -83,6 +138,9 @@ def get_dashboard_summary():
 def main():
     st.set_page_config(page_title="Accounting System", layout="wide")
 
+    # Gatekeeper authentication and permissions
+    check_auth_and_permissions()
+
     # Ensure data directory exists, attempt startup S3 download if missing, and initialize schema
     db.ensure_data_dir()
     if not db.DB_PATH.exists():
@@ -106,6 +164,11 @@ def main():
     fiscal_year_selector()
 
     st.sidebar.title("Accounting System")
+
+    # User info and role display
+    user_email = (getattr(st.user, "email", "") or str(st.user)).strip()
+    st.sidebar.caption(f"Logged in as: **{user_email}**")
+
     if is_read_only():
         st.sidebar.info("🔒 Read-Only Mode")
         nav_options = [
@@ -115,6 +178,7 @@ def main():
             "Cloud Sync",
         ]
     else:
+        st.sidebar.success("✏️ Admin Access")
         nav_options = [
             "Dashboard", 
             "Transactions",
@@ -126,23 +190,8 @@ def main():
             "Configuration"
         ]
 
-
-    # 1. Check if the user is authenticated
-#    if not st.user.is_logged_in:
-#        # Prompt the user to log in if they haven't already
-#        st.write("Please log in to access the application.")
-#    if st.button("Log in with Google"):
-#        st.login("google")
-#        st.stop()  # Stop executing the rest of the page for unauthenticated users
-
-    # 2. If logged in, display the welcome message using st.user attributes
-    st.title(f"Welcome, {st.user}!")
-    st.write(f"Logged in as: {st.user}")
-
-    # 3. Provide a logout option
-    if st.button("Log out"):
+    if st.sidebar.button("Log out"):
         st.logout()
-
 
     page = st.sidebar.radio("Navigate to:", nav_options)
 
@@ -184,12 +233,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # --- 1. Authentication Gatekeeper ---
-    if not st.user.is_logged_in:
-        st.title("🔐 Authentication Required")
-        st.write("Please log in with your Google account to access the generator.")
-        st.button("Log in with Google", on_click=st.login)
-        st.stop()  # Prevents downstream code execution until authenticated
-
-    # --- 2. Authenticated Application Logic ---
     main()

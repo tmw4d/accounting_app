@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import MagicMock, patch
 import database as db
 import app
 
@@ -38,19 +39,60 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
     def test_read_only_mode_detection(self):
         import streamlit as st
 
-        # Test session state override
-        st.session_state["read_only_mode"] = True
-        self.assertTrue(app.is_read_only(), "Expected is_read_only() to return True when session_state['read_only_mode'] is True")
+        # Test session state override (True)
+        with patch.object(st, "session_state", {"read_only_mode": True}):
+            self.assertTrue(app.is_read_only(), "Expected is_read_only() to return True when session_state['read_only_mode'] is True")
 
-        # Test session state false
-        st.session_state["read_only_mode"] = False
-        os.environ.pop("READ_ONLY", None)
-        self.assertFalse(app.is_read_only(), "Expected is_read_only() to return False when disabled")
+        # Test session state override (False)
+        with patch.object(st, "session_state", {"read_only_mode": False}):
+            os.environ.pop("READ_ONLY", None)
+            self.assertFalse(app.is_read_only(), "Expected is_read_only() to return False when session_state['read_only_mode'] is False")
 
         # Test environment variable override
-        os.environ["READ_ONLY"] = "true"
-        self.assertTrue(app.is_read_only(), "Expected is_read_only() to return True when READ_ONLY env var is 'true'")
-        os.environ.pop("READ_ONLY", None)
+        with patch.object(st, "session_state", {}):
+            os.environ["READ_ONLY"] = "true"
+            self.assertTrue(app.is_read_only(), "Expected is_read_only() to return True when READ_ONLY env var is 'true'")
+            os.environ.pop("READ_ONLY", None)
+
+    def test_auth_and_permissions(self):
+        import streamlit as st
+
+        mock_user = MagicMock()
+        mock_stop = MagicMock()
+
+        with patch.object(st, "user", mock_user, create=True), patch.object(st, "stop", mock_stop):
+            # 1. Unauthenticated user -> triggers stop
+            mock_user.is_logged_in = False
+            app.check_auth_and_permissions()
+            mock_stop.assert_called()
+
+            # Reset mock
+            mock_stop.reset_mock()
+
+            # 2. Authenticated user with invalid domain -> triggers stop
+            mock_user.is_logged_in = True
+            mock_user.email = "unauthorized@gmail.com"
+            app.check_auth_and_permissions()
+            mock_stop.assert_called()
+
+            # Reset mock
+            mock_stop.reset_mock()
+
+            # 3. Authenticated standard user from @yula-ulti.org -> read_only_mode = True
+            session_dict = {}
+            with patch.object(st, "session_state", session_dict):
+                mock_user.is_logged_in = True
+                mock_user.email = "member@yula-ulti.org"
+                app.check_auth_and_permissions()
+                self.assertTrue(session_dict.get("read_only_mode"), "Expected standard domain user to be read-only")
+
+            # 4. Authenticated treasurer from @yula-ulti.org -> read_only_mode = False
+            session_dict = {}
+            with patch.object(st, "session_state", session_dict):
+                mock_user.is_logged_in = True
+                mock_user.email = "treasurer@yula-ulti.org"
+                app.check_auth_and_permissions()
+                self.assertFalse(session_dict.get("read_only_mode"), "Expected treasurer to have full edit access (read_only_mode=False)")
 
 
 if __name__ == "__main__":
