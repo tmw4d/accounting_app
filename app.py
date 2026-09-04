@@ -1,4 +1,6 @@
 import os
+from datetime import date
+
 import streamlit as st
 import database as db
 import cloud_sync
@@ -25,10 +27,15 @@ def check_auth_and_permissions():
     if not hasattr(st, "user") or not st.user.is_logged_in:
         st.title("🔐 Authentication Required")
         st.write("Please log in with your Google account to access the Accounting System.")
-        if hasattr(st, "login"):
-            st.button("Log in with Google", on_click=st.login)
+        if hasattr(st, "login") and "auth" in st.secrets and "google" in st.secrets.auth:
+            st.button("Log in with Google", on_click=st.login("google"))
         else:
-            st.button("Log in with Google")
+            # Fallback for Community Cloud default injection
+            st.button("Log in with Google", on_click=st.login)
+#        if hasattr(st, "login"):
+#            st.button("Log in with Google", on_click=st.login("google"))
+#        else:
+#            st.button("Log in with Google")
         st.stop()  # Stop execution until authenticated
 
     # Get user email
@@ -149,6 +156,34 @@ def get_dashboard_summary():
         return latest_posted_val, pending_sum_val, total_balance
 
 
+def get_dashboard_data_through_dates():
+    """Return the latest active bank and imported registration data dates."""
+    with db.get_connection() as conn:
+        dates = conn.execute("""
+            SELECT
+                (
+                    SELECT MAX(date(transaction_date))
+                    FROM ledger
+                    WHERE source_indicator = 'Bank'
+                        AND is_deleted = 0
+                        AND transaction_date != 'pending'
+                ) AS bank_data_through,
+                (
+                    SELECT MAX(date(transfer_timestamp))
+                    FROM topscore_transfer_items
+                ) AS registration_data_through
+        """).fetchone()
+
+    return dates[0], dates[1]
+
+
+def format_data_through_date(value):
+    if not value:
+        return "not available"
+    parsed_date = date.fromisoformat(value)
+    return f"{parsed_date.strftime('%b')} {parsed_date.day}, {parsed_date.year}"
+
+
 def main():
     st.set_page_config(page_title="Accounting System", layout="wide")
 
@@ -187,6 +222,7 @@ def main():
         st.sidebar.info("🔒 Read-Only Mode")
         nav_options = [
             "Dashboard",
+            "Registrations",
             "Transactions",
             "Reports",
             "Cloud Sync",
@@ -195,6 +231,7 @@ def main():
         st.sidebar.success("✏️ Admin Access")
         nav_options = [
             "Dashboard", 
+            "Registrations",
             "Transactions",
             "Reports",
             "Cloud Sync",
@@ -219,6 +256,12 @@ def main():
         col1.metric("Latest Posted Balance", f"${posted:,.2f}")
         col2.metric("Pending Transactions", f"${pending:,.2f}")
         col3.metric("Projected Total", f"${total:,.2f}")
+
+        bank_date, registration_date = get_dashboard_data_through_dates()
+        st.caption(
+            f"Bank data through {format_data_through_date(bank_date)} · "
+            f"Registration data through {format_data_through_date(registration_date)}"
+        )
         
         from pages import dashboard
         dashboard.render_dashboard_table()
@@ -226,6 +269,9 @@ def main():
     elif page == "Transactions":
         from pages import transactions
         transactions.render()
+    elif page == "Registrations":
+        from pages import registrations
+        registrations.render(read_only=is_read_only())
     elif page == "Reports":
         from pages import reports
         reports.render()

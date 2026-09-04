@@ -180,30 +180,71 @@ def init_db():
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS topscore_product_mappings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                product_name TEXT NOT NULL UNIQUE,
-                grouping TEXT NOT NULL,
-                category_id INTEGER,
-                allocation_method_id INTEGER,
-                primary_registration_ind INTEGER DEFAULT 0,
-                active_ind INTEGER DEFAULT 1,
-                notes TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP,
-                FOREIGN KEY(category_id) REFERENCES categories(id),
-                FOREIGN KEY(allocation_method_id) REFERENCES allocation_methods(id)
+            CREATE TABLE IF NOT EXISTS registration_groupings (
+                name TEXT PRIMARY KEY
             )
         """)
-        mapping_columns = [
-            row[1]
-            for row in cursor.execute("PRAGMA table_info(topscore_product_mappings)").fetchall()
-        ]
-        if "primary_registration_ind" not in mapping_columns:
-            cursor.execute("""
-                ALTER TABLE topscore_product_mappings
-                ADD COLUMN primary_registration_ind INTEGER DEFAULT 0
+
+        # Product mappings used to include accounting metadata. Registrations only
+        # needs a product, its grouping, and whether it is a primary registration.
+        mapping_columns = {
+            row[1] for row in cursor.execute("PRAGMA table_info(topscore_product_mappings)").fetchall()
+        }
+        expected_mapping_columns = {"product_name", "grouping", "primary_registration_ind"}
+        if mapping_columns and mapping_columns != expected_mapping_columns:
+            cursor.execute("ALTER TABLE topscore_product_mappings RENAME TO topscore_product_mappings_legacy")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS topscore_product_mappings (
+                product_name TEXT PRIMARY KEY,
+                grouping TEXT NOT NULL,
+                primary_registration_ind INTEGER NOT NULL DEFAULT 0
+                    CHECK (primary_registration_ind IN (0, 1))
+            )
+        """)
+
+        legacy_table = cursor.execute("""
+            SELECT 1
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'topscore_product_mappings_legacy'
+        """).fetchone()
+        if legacy_table:
+            legacy_columns = {
+                row[1] for row in cursor.execute("PRAGMA table_info(topscore_product_mappings_legacy)").fetchall()
+            }
+            primary_column = "primary_registration_ind" if "primary_registration_ind" in legacy_columns else "0"
+            cursor.execute(f"""
+                INSERT OR REPLACE INTO topscore_product_mappings (
+                    product_name, grouping, primary_registration_ind
+                )
+                SELECT product_name, grouping, COALESCE({primary_column}, 0)
+                FROM topscore_product_mappings_legacy
+                WHERE product_name IS NOT NULL
+                    AND trim(product_name) != ''
+                    AND grouping IS NOT NULL
+                    AND trim(grouping) != ''
             """)
+            cursor.execute("DROP TABLE topscore_product_mappings_legacy")
+
+        cursor.executemany(
+            "INSERT OR IGNORE INTO registration_groupings (name) VALUES (?)",
+            [
+                ("High School",),
+                ("Middle School",),
+                ("Winter",),
+                ("Donation",),
+                ("Fundraising",),
+                ("Merchandise",),
+                ("Tournament Bids",),
+                ("Other",),
+            ],
+        )
+        cursor.execute("""
+            INSERT OR IGNORE INTO registration_groupings (name)
+            SELECT DISTINCT grouping
+            FROM topscore_product_mappings
+            WHERE trim(grouping) != ''
+        """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS topscore_transfer_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

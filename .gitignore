@@ -5,4 +5,5 @@ bank_import/
 *.pyc
 .streamlit/secrets.toml
 data/s3_sync_state.json
-data/backups/
+data/backups/*
+data/*

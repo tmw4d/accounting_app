@@ -233,7 +233,6 @@ def render_topscore_player_counts():
                 JOIN fy ON date(substr(t.transfer_timestamp, 1, 10)) BETWEEN fy.start_date AND fy.end_date
                 LEFT JOIN topscore_product_mappings m
                     ON t.product_name = m.product_name
-                    AND m.active_ind = 1
                 WHERE fy.fiscal_year_id = ?
                     AND lower(t.item_type) = 'payment'
                     AND lower(t.type) = 'payment'
@@ -292,7 +291,7 @@ def render_topscore_player_counts():
     metrics_df.index.name = "Metric"
 
     st.write("### TopScore Player Counts by Program")
-    st.caption("Based on imported TopScore payment rows in the selected fiscal year. Primary rows use products tagged as primary registrations in Configuration > TopScore Products.")
+    st.caption("Based on imported TopScore payment rows in the selected fiscal year. Primary rows use products tagged as primary registrations in Registrations.")
 
     def highlight_total_column(data):
         styles = pd.DataFrame("", index=data.index, columns=data.columns)
