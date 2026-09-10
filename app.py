@@ -235,7 +235,7 @@ def main():
             "Transactions",
             "Reports",
             "Cloud Sync",
-            "Reconcile Expenses", 
+            "Reconcile Transactions", 
             "Manual Entry", 
             "Import Bank Files", 
             "Configuration"
@@ -278,7 +278,7 @@ def main():
     elif page == "Cloud Sync":
         from pages import cloud_sync as cloud_sync_page
         cloud_sync_page.render()
-    elif page == "Reconcile Expenses":
+    elif page == "Reconcile Transactions":
         from pages import reconcile
         reconcile.render_reconciliation()
     elif page == "Manual Entry":

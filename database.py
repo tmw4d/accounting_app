@@ -525,8 +525,9 @@ def get_program_financial_breakdown(fy_id, conn=None):
                     ELSE 'Expense'
                 END as flow,
                 CASE 
-                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
-                    THEN - SUM(l.amount * ifnull(ar.percentage,0))
+                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount * ifnull(ar.percentage,0))
+                    WHEN lower(c.flow) = 'income' THEN SUM(l.amount * ifnull(ar.percentage,0))
+                    WHEN l.amount < 0 THEN - SUM(l.amount * ifnull(ar.percentage,0))
                     ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
                 END as total
             FROM ledger l
@@ -549,8 +550,9 @@ def get_program_financial_breakdown(fy_id, conn=None):
                     ELSE 'Expense'
                 END as flow,
                 CASE 
-                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
-                    THEN - SUM(l.amount)
+                    WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount)
+                    WHEN lower(c.flow) = 'income' THEN SUM(l.amount)
+                    WHEN l.amount < 0 THEN - SUM(l.amount)
                     ELSE SUM(l.amount) 
                 END as total
             FROM ledger l
