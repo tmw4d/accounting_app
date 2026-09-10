@@ -85,71 +85,9 @@ def _get_recent_fiscal_years(selected_fy_id, count=2):
 
 
 def _get_program_breakdown(fy_id):
-    with db.get_connection() as conn:
-
-        query = """
-            SELECT
-                p.name AS program_name,
-                CASE
-                    WHEN lower(c.flow) = 'income' THEN 'Income'
-                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    ELSE 'Uncategorized'
-                END AS flow,
-                CASE WHEN lower(c.flow) = 'expense'
-                    THEN -SUM(l.amount * ifnull(ar.percentage, 0))
-                    ELSE SUM(l.amount * ifnull(ar.percentage, 0))
-                END AS total
-            FROM ledger l
-            LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
-            LEFT JOIN allocation_rules ar ON am.id = ar.method_id
-            LEFT JOIN programs p ON ar.program_id = p.id
-            LEFT JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ?
-                AND l.is_deleted = 0
-            GROUP BY p.name, c.flow
-
-            UNION ALL
-
-            SELECT
-                'Total' AS program_name,
-                CASE
-                    WHEN lower(c.flow) = 'income' THEN 'Income'
-                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    ELSE 'Uncategorized'
-                END AS flow,
-                CASE WHEN lower(c.flow) = 'expense'
-                    THEN -SUM(l.amount)
-                    ELSE SUM(l.amount)
-                END AS total
-            FROM ledger l
-            LEFT JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ?
-                AND l.is_deleted = 0
-            GROUP BY c.flow
-        """
-        df = pd.read_sql_query(query, conn, params=(fy_id, fy_id))
-
-    if df.empty:
-        return pd.DataFrame()
-
-    pivot_df = df.pivot_table(
-        index="flow",
-        columns="program_name",
-        values="total",
-        aggfunc="sum",
-        fill_value=0,
-    )
-
-    if "Total" in pivot_df.columns:
-        pivot_df["Unallocated"] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
-
-    for required_row in ["Income", "Expense"]:
-        if required_row not in pivot_df.index:
-            pivot_df.loc[required_row] = 0
-
-    pivot_df.loc["Total"] = pivot_df.loc["Income"] - pivot_df.loc["Expense"]
-    pivot_df = pivot_df.reindex(["Income", "Expense", "Total"])
-    pivot_df.index.name = "Flow"
+    pivot_df = db.get_program_financial_breakdown(fy_id)
+    if not pivot_df.empty:
+        pivot_df.index.name = "Flow"
     return pivot_df
 
 

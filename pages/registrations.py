@@ -58,6 +58,7 @@ def _replace_topscore_export(rows, filename):
             (filename, row_number, *row)
             for row_number, row in enumerate(rows, start=2)
         ])
+        return db.refresh_registration_allocations(conn)
 
 
 def _load_groupings():
@@ -127,7 +128,31 @@ def _save_mappings(original, edited):
                         primary_registration_ind = excluded.primary_registration_ind
                 """, (new.product_name, new.grouping, int(bool(new.primary_registration_ind))))
             changed += 1
-    return changed
+        allocation_updates = db.refresh_registration_allocations(conn) if changed else []
+    return changed, allocation_updates
+
+
+def _render_allocation_summary():
+    summary = pd.DataFrame(db.get_registration_allocation_summary())
+    if summary.empty:
+        return
+
+    st.subheader("Registration allocation distribution")
+    st.caption("These July–June distributions are automatically applied to posted ledger rows in the Registration category.")
+    display = summary.rename(columns={
+        "allocation_year": "Allocation Year",
+        "program_name": "Program",
+        "net_dollars": "Net Registration Dollars",
+        "percentage": "Allocation %",
+    })
+    st.dataframe(
+        display.style.format({
+            "Net Registration Dollars": "${:,.2f}",
+            "Allocation %": "{:.2%}",
+        }),
+        hide_index=True,
+        width="stretch",
+    )
 
 
 def _current_import_details():
@@ -154,8 +179,12 @@ def render(read_only=False):
             parsed_rows = _read_export(uploaded_file)
             st.caption(f"Ready to replace the current export with {len(parsed_rows):,} rows from {uploaded_file.name}.")
             if st.button("Replace current TopScore data", type="primary", disabled=read_only):
-                _replace_topscore_export(parsed_rows, uploaded_file.name)
-                st.success(f"Imported {len(parsed_rows):,} rows. The prior TopScore export was replaced.")
+                allocation_updates = _replace_topscore_export(parsed_rows, uploaded_file.name)
+                allocation_count = sum(item["updated_ledger_rows"] for item in allocation_updates)
+                st.success(
+                    f"Imported {len(parsed_rows):,} rows. The prior TopScore export was replaced "
+                    f"and {allocation_count:,} Registration ledger row(s) were recalculated."
+                )
                 st.rerun()
         except ValueError as exc:
             st.error(str(exc))
@@ -212,8 +241,14 @@ def render(read_only=False):
         if not invalid_primary.empty:
             st.error("Assign a grouping before marking a product as a primary registration product.")
             return
-        changed = _save_mappings(summary, edited_df)
+        changed, allocation_updates = _save_mappings(summary, edited_df)
         if changed:
-            st.success(f"Saved {changed:,} product mapping(s).")
+            allocation_count = sum(item["updated_ledger_rows"] for item in allocation_updates)
+            st.success(
+                f"Saved {changed:,} product mapping(s) and recalculated "
+                f"{allocation_count:,} Registration ledger row(s)."
+            )
             st.rerun()
         st.info("No mapping changes to save.")
+
+    _render_allocation_summary()

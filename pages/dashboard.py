@@ -48,85 +48,20 @@ def render_dashboard_table():
     render_unreconciled_alert()
 
     fy_id = st.session_state.selected_fy
-    
-    with db.get_connection() as conn:
-        # 1. Fetch data: Sums grouped by flow, program, and category
-        query = """
-            SELECT 
-                p.name as program_name,
-                CASE
-                    WHEN lower(c.flow) = 'income' THEN 'Income'
-                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    WHEN l.amount >= 0 THEN 'Income'
-                    ELSE 'Expense'
-                END as flow,
-                CASE 
-                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
-                    THEN - SUM(l.amount * ifnull(ar.percentage,0))
-                    ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
-                END as total
-            FROM ledger l
-            LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
-            LEFT JOIN allocation_rules ar ON am.id = ar.method_id
-            LEFT JOIN programs p ON ar.program_id = p.id
-            LEFT JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
-            GROUP BY p.name, flow
+    pivot_df = db.get_program_financial_breakdown(fy_id)
 
-            UNION ALL
-
-            SELECT 
-                'Total' as program_name,
-                CASE
-                    WHEN lower(c.flow) = 'income' THEN 'Income'
-                    WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                    WHEN l.amount >= 0 THEN 'Income'
-                    ELSE 'Expense'
-                END as flow,
-                CASE 
-                    WHEN (lower(c.flow) = 'expense' OR (c.flow IS NULL AND l.amount < 0)) 
-                    THEN - SUM(l.amount)
-                    ELSE SUM(l.amount) 
-                END as total
-            FROM ledger l
-            LEFT JOIN categories c ON l.category_id = c.id
-            WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
-            GROUP BY flow
-        """
-        df = pd.read_sql_query(query, conn, params=(fy_id, fy_id))
-
-    if df.empty:
+    if pivot_df.empty:
         st.write("### Financial Breakdown by Program")
         st.info("No financial data found for the selected fiscal year.")
         render_topscore_player_counts()
         return
 
-    # 2. Pivot the table
-    # Rows: Flow (Income/Expense), Columns: Program
-    pivot_df = df.pivot_table(index='flow', columns='program_name', values='total', aggfunc='sum', fill_value=0)
-    
-    # 3. Add "Unallocated" Column
-    if "Total" in pivot_df.columns:
-        pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
-
-    for flow_row in ["Income", "Expense"]:
-        if flow_row not in pivot_df.index:
-            pivot_df.loc[flow_row] = 0
-
-    # 4. Calculate Net Total Row (Income - Expense)
-    pivot_df.loc['Total'] = pivot_df.loc['Income'] - pivot_df.loc['Expense']
-    
-    # Reorder index so Income is first
-    pivot_df = pivot_df.reindex(['Income', 'Expense', 'Total'])
     ordered_columns = [col for col in FINANCIAL_PROGRAM_ORDER if col in pivot_df.columns]
     remaining_columns = [col for col in pivot_df.columns if col not in ordered_columns]
     pivot_df = pivot_df[ordered_columns + remaining_columns]
     pivot_df.index.name = "Flow"
 
-    # 5. Display
     st.write("### Financial Breakdown by Program")
-    total_col_idx = list(pivot_df.columns).index("Total") if "Total" in pivot_df.columns else None
-    total_row_idx = list(pivot_df.index).index("Total") if "Total" in pivot_df.index else None
 
     def highlight_totals(data):
         styles = pd.DataFrame("", index=data.index, columns=data.columns)
@@ -147,29 +82,6 @@ def render_dashboard_table():
                 )
         return styles
 
-    table_styles = [
-        {"selector": "th", "props": [("font-size", "16px"), ("font-weight", "700")]},
-        {"selector": "td", "props": [("font-size", "16px")]},
-    ]
-    if total_col_idx is not None:
-        table_styles.append({
-            "selector": f".col{total_col_idx}",
-            "props": [
-                ("background-color", "#1f6feb"),
-                ("color", "#ffffff"),
-                ("font-weight", "700"),
-            ],
-        })
-    if total_row_idx is not None:
-        table_styles.append({
-            "selector": f".row{total_row_idx}",
-            "props": [
-                ("background-color", "#238636"),
-                ("color", "#ffffff"),
-                ("font-weight", "700"),
-            ],
-        })
-
     styled_df = (
         pivot_df.style
         .format("${:,.0f}")
@@ -179,7 +91,6 @@ def render_dashboard_table():
             "text-align": "right",
             "white-space": "nowrap",
         })
-        .set_table_styles(table_styles)
     )
     st.dataframe(
         styled_df,

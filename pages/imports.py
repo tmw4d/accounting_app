@@ -344,8 +344,11 @@ def render():
         if new_tx.empty:
             st.info("No new transactions found in this statement.")
         else:
-            # Map category ID to printable name for preview
+            # Allow categories that were not recognized in the CSV to be mapped
+            # directly in the import staging table.
             new_tx['Mapped Category'] = new_tx['category_id'].apply(lambda x: cat_id_name_map.get(x, 'Uncategorized'))
+            category_name_id_map = {'Uncategorized': None}
+            category_name_id_map.update({name: category_id for category_id, name in cat_id_name_map.items()})
             
             # Format Pending Match column nicely
             def format_pending_match(desc):
@@ -354,11 +357,47 @@ def render():
                 return f"🔗 {desc}"
             new_tx['Pending Match'] = new_tx['matched_pending_desc'].apply(format_pending_match)
             
-            st.write("The following transactions will be written to the ledger:")
-            st.dataframe(
-                new_tx[['date', 'description', 'amount', 'daily_posted_balance', 'check_number', 'Mapped Category', 'Pending Match']],
-                width="stretch"
+            uncategorized_count = int((new_tx['Mapped Category'] == 'Uncategorized').sum())
+            if uncategorized_count:
+                st.warning(f"{uncategorized_count} transaction(s) need a category. Choose one in the Mapped Category column before importing.")
+            else:
+                st.success("Every new transaction has a mapped category.")
+
+            st.write("Review the transactions that will be written to the ledger:")
+            edited_new_tx = st.data_editor(
+                new_tx,
+                hide_index=True,
+                width="stretch",
+                disabled=[
+                    'date', 'description', 'amount', 'daily_posted_balance',
+                    'check_number', 'Pending Match', 'category_id', 'category_name',
+                    'transaction_type', 'notes', 'more_notes', 'allocation_method_id',
+                    'status', 'matched_ledger_id', 'matched_ledger_desc',
+                    'matched_pending_id', 'matched_pending_desc',
+                ],
+                column_config={
+                    'date': st.column_config.TextColumn('Date'),
+                    'description': st.column_config.TextColumn('Description', width='large'),
+                    'amount': st.column_config.NumberColumn('Amount', format='$%.2f'),
+                    'daily_posted_balance': st.column_config.NumberColumn('Daily Posted Balance', format='$%.2f'),
+                    'check_number': st.column_config.TextColumn('Check Number'),
+                    'Mapped Category': st.column_config.SelectboxColumn(
+                        'Mapped Category',
+                        options=list(category_name_id_map.keys()),
+                        required=True,
+                    ),
+                    'Pending Match': st.column_config.TextColumn('Pending Match'),
+                },
+                column_order=[
+                    'date', 'description', 'amount', 'daily_posted_balance',
+                    'check_number', 'Mapped Category', 'Pending Match',
+                ],
             )
+
+            # Keep the editable category selections in the staging data that is
+            # later used by the import confirmation step.
+            for row_index, edited_row in edited_new_tx.iterrows():
+                staged_df.at[row_index, 'category_id'] = category_name_id_map[edited_row['Mapped Category']]
             
     with tab2:
         dup_tx = staged_df[staged_df['status'] == 'Potential Duplicate'].copy()

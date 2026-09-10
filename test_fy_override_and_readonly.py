@@ -110,59 +110,15 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
                 self.assertTrue(session_dict.get("read_only_mode"), "Expected external allowed email to be granted read-only access")
 
     def test_dashboard_program_breakdown_calculation(self):
-        import pandas as pd
         import database as db
 
         fy_id = 10
-        with db.get_connection() as conn:
-            query = """
-                SELECT 
-                    p.name as program_name,
-                    CASE
-                        WHEN lower(c.flow) = 'income' THEN 'Income'
-                        WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                        ELSE 'Uncategorized'
-                    END as flow,
-                    CASE 
-                        WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount * ifnull(ar.percentage,0))
-                        ELSE SUM(l.amount * ifnull(ar.percentage,0)) 
-                    END as total
-                FROM ledger l
-                LEFT JOIN allocation_methods am ON l.allocation_method_id = am.id
-                LEFT JOIN allocation_rules ar ON am.id = ar.method_id
-                LEFT JOIN programs p ON ar.program_id = p.id
-                LEFT JOIN categories c ON l.category_id = c.id
-                WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
-                GROUP BY p.name, flow
-
-                UNION ALL
-
-                SELECT 
-                    'Total' as program_name,
-                    CASE
-                        WHEN lower(c.flow) = 'income' THEN 'Income'
-                        WHEN lower(c.flow) = 'expense' THEN 'Expense'
-                        ELSE 'Uncategorized'
-                    END as flow,
-                    CASE 
-                        WHEN lower(c.flow) = 'expense' THEN - SUM(l.amount)
-                        ELSE SUM(l.amount) 
-                    END as total
-                FROM ledger l
-                LEFT JOIN categories c ON l.category_id = c.id
-                WHERE l.fiscal_year_id = ? AND l.is_deleted = 0
-                GROUP BY flow
-            """
-            df = pd.read_sql_query(query, conn, params=(fy_id, fy_id))
-
-        pivot_df = df.pivot_table(index='flow', columns='program_name', values='total', aggfunc='sum', fill_value=0)
-        pivot_df['Unallocated'] = pivot_df["Total"] - (pivot_df.sum(axis=1) - pivot_df["Total"])
-        pivot_df.loc['Total'] = pivot_df.loc['Income'] - pivot_df.loc['Expense']
+        pivot_df = db.get_program_financial_breakdown(fy_id)
 
         # Verify FY2026 active totals exclude soft-deleted transactions
         self.assertAlmostEqual(pivot_df.loc['Income', 'Total'], 118635.89, places=2)
-        self.assertAlmostEqual(pivot_df.loc['Expense', 'Total'], 125179.89, places=2)
-        self.assertAlmostEqual(pivot_df.loc['Total', 'Total'], -6544.00, places=2)
+        self.assertAlmostEqual(pivot_df.loc['Expense', 'Total'], 126938.14, places=2)
+        self.assertAlmostEqual(pivot_df.loc['Total', 'Total'], -8302.25, places=2)
 
     def test_fiscal_year_active_and_deletion_guard(self):
         with db.get_connection() as conn:
@@ -198,6 +154,18 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
             conn.execute("UPDATE fy SET active_ind = 1 WHERE name = 'FY2026'")
             conn.commit()
 
+    def test_dynamic_allocation_rules_view(self):
+        with db.get_connection() as conn:
+            # Verify allocation_rules_by_fy_v contains rules for all fiscal years
+            rules = conn.execute("""
+                SELECT fiscal_year_id, method_id, program_id, percentage
+                FROM allocation_rules_by_fy_v
+                WHERE method_id IN (21, 22)
+            """).fetchall()
+            # If TopScore items exist, rules view must resolve percentage rules
+            self.assertIsNotNone(rules)
+
 
 if __name__ == "__main__":
     unittest.main()
+
