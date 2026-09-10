@@ -165,6 +165,20 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
             # If TopScore items exist, rules view must resolve percentage rules
             self.assertIsNotNone(rules)
 
+    def test_fresh_database_initialization(self):
+        import tempfile
+        from pathlib import Path
+        
+        orig_db_path = db.DB_PATH
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            db.DB_PATH = tmp_path
+            db.init_db()
+            self.assertTrue(tmp_path.exists(), "Expected fresh DB file to be created")
+        finally:
+            db.DB_PATH = orig_db_path
+
 
 if __name__ == "__main__":
     unittest.main()

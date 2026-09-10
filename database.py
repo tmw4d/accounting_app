@@ -284,14 +284,18 @@ def init_db():
         # Convert the legacy, generated per-year methods once.  The statements
         # are idempotent and intentionally retain the old methods/rules for
         # historical auditability; reports no longer depend on those rows.
-        cursor.execute("""
-            UPDATE ledger
-            SET allocation_method_id = 22
-            WHERE allocation_method_id IN (
-                SELECT allocation_method_id
-                FROM registration_allocation_methods
-            )
-        """)
+        has_legacy_reg_methods = cursor.execute("""
+            SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'registration_allocation_methods'
+        """).fetchone()
+        if has_legacy_reg_methods:
+            cursor.execute("""
+                UPDATE ledger
+                SET allocation_method_id = 22
+                WHERE allocation_method_id IN (
+                    SELECT allocation_method_id
+                    FROM registration_allocation_methods
+                )
+            """)
         cursor.execute("""
             UPDATE ledger
             SET allocation_method_id = 21
