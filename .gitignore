@@ -1,9 +1,0 @@
-ledger.db
-*.db-journal
-bank_import/
-*.ipynb
-*.pyc
-.streamlit/secrets.toml
-data/s3_sync_state.json
-data/backups/*
-data/*
