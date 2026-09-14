@@ -179,6 +179,24 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
         finally:
             db.DB_PATH = orig_db_path
 
+    def test_sequential_fy_running_balance_and_pending(self):
+        with db.get_connection() as conn:
+            # Rebuild running balances
+            db.recalculate_running_balances(conn)
+
+            # 1. Verify pending transactions have non-null running_balance
+            pending_rows = conn.execute("""
+                SELECT COUNT(*), COUNT(running_balance)
+                FROM ledger
+                WHERE transaction_date = 'pending' AND is_deleted = 0
+            """).fetchone()
+            if pending_rows and pending_rows[0] > 0:
+                self.assertEqual(pending_rows[0], pending_rows[1], "Expected all pending rows to have calculated running_balance")
+
+            # 2. Verify all active transactions have calculated running_balance
+            active_count = conn.execute("SELECT COUNT(*), COUNT(running_balance) FROM ledger WHERE is_deleted = 0").fetchone()
+            self.assertEqual(active_count[0], active_count[1], "Expected all active rows to have calculated running_balance")
+
 
 if __name__ == "__main__":
     unittest.main()

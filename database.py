@@ -24,27 +24,30 @@ def get_connection():
 
 
 def recalculate_running_balances(conn):
-    """Rebuild stored balances for all active, posted ledger transactions."""
+    """Rebuild stored balances for all active ledger transactions ordered by Fiscal Year sequence."""
     conn.execute("""
         UPDATE ledger
         SET running_balance = NULL
         WHERE is_deleted != 0
-            OR transaction_date = 'pending'
     """)
     conn.execute("""
         WITH calculated_balances AS (
             SELECT
-                id,
+                l.id,
                 ROUND(
-                    SUM(amount) OVER (
-                        ORDER BY transaction_date, id
+                    SUM(l.amount) OVER (
+                        ORDER BY 
+                            COALESCE(fy.start_date, '9999-12-31') ASC,
+                            CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END ASC,
+                            l.transaction_date ASC,
+                            l.id ASC
                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                     ),
                     2
                 ) AS balance
-            FROM ledger
-            WHERE is_deleted = 0
-                AND transaction_date != 'pending'
+            FROM ledger l
+            LEFT JOIN fy ON l.fiscal_year_id = fy.fiscal_year_id
+            WHERE l.is_deleted = 0
         )
         UPDATE ledger
         SET running_balance = (
