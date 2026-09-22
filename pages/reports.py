@@ -23,43 +23,8 @@ def _get_fiscal_year(fy_id):
 
 
 def _get_summary(fy_id):
-    with db.get_connection() as conn:
+    return db.get_fiscal_year_summary(fy_id)
 
-        first_posted = conn.execute("""
-            SELECT amount, daily_posted_balance
-            FROM ledger
-            WHERE fiscal_year_id = ?
-                AND is_deleted = 0
-                AND transaction_date != 'pending'
-                AND daily_posted_balance IS NOT NULL
-            ORDER BY transaction_date ASC, id ASC
-            LIMIT 1
-        """, (fy_id,)).fetchone()
-        latest_posted = conn.execute("""
-            SELECT daily_posted_balance
-            FROM ledger
-            WHERE fiscal_year_id = ?
-                AND is_deleted = 0
-                AND transaction_date != 'pending'
-                AND daily_posted_balance IS NOT NULL
-            ORDER BY transaction_date DESC, id DESC
-            LIMIT 1
-        """, (fy_id,)).fetchone()
-        pending_sum = conn.execute("""
-            SELECT SUM(amount)
-            FROM ledger
-            WHERE fiscal_year_id = ?
-                AND is_deleted = 0
-                AND transaction_date = 'pending'
-        """, (fy_id,)).fetchone()
-
-    if first_posted and first_posted[1] is not None:
-        initial = float(first_posted[1]) - float(first_posted[0] or 0)
-    else:
-        initial = 0.0
-    posted = float(latest_posted[0]) if latest_posted and latest_posted[0] is not None else 0.0
-    pending = float(pending_sum[0]) if pending_sum and pending_sum[0] is not None else 0.0
-    return initial, posted, pending, posted + pending
 
 
 def _get_recent_fiscal_years(selected_fy_id, count=2):
@@ -562,10 +527,11 @@ def render():
     pdf_bytes, report_data = _build_pdf_report(fy_id)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Initial FY Balance", _currency(report_data["initial"]))
-    c2.metric("Latest Posted Balance", _currency(report_data["posted"]))
-    c3.metric("Pending Transactions", _currency(report_data["pending"]))
-    c4.metric("Projected Total", _currency(report_data["projected"]))
+    c1.metric("Initial FY Balance", f"${report_data['initial']:,.2f}")
+    c2.metric("Latest Posted Balance", f"${report_data['posted']:,.2f}")
+    c3.metric("Pending Transactions", f"${report_data['pending']:,.2f}")
+    c4.metric("Projected Total", f"${report_data['projected']:,.2f}")
+
 
     st.write("### Program Breakdown Preview")
     if report_data["program_breakdown"].empty:

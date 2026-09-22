@@ -60,14 +60,21 @@ def _replace_topscore_export(rows, filename):
         ])
 
 
-def _load_groupings():
+def _load_categories():
     with db.get_connection() as conn:
         return [
             row[0]
             for row in conn.execute(
-                "SELECT name FROM registration_groupings ORDER BY name"
+                "SELECT name FROM categories WHERE lower(flow) = 'income' AND active_ind = 1 ORDER BY name"
             ).fetchall()
         ]
+
+
+def _load_programs():
+    with db.get_connection() as conn:
+        return conn.execute(
+            "SELECT code, name FROM programs WHERE active_ind = 1 ORDER BY code"
+        ).fetchall()
 
 
 def _load_product_summary():
@@ -75,7 +82,8 @@ def _load_product_summary():
         return pd.read_sql_query("""
             SELECT
                 t.product_name,
-                COALESCE(m.grouping, 'Unmapped') AS grouping,
+                COALESCE(m.category, 'Unmapped') AS category,
+                COALESCE(p.name, 'None') AS program,
                 COALESCE(m.primary_registration_ind, 0) AS primary_registration_ind,
                 COUNT(DISTINCT CASE
                     WHEN lower(t.item_type) = 'payment'
@@ -100,19 +108,27 @@ def _load_product_summary():
                 SUM(t.amount) AS net_dollars
             FROM topscore_transfer_items t
             LEFT JOIN topscore_product_mappings m ON m.product_name = t.product_name
+            LEFT JOIN programs p ON m.program_code = p.code
             WHERE trim(COALESCE(t.product_name, '')) != ''
-            GROUP BY t.product_name, m.grouping, m.primary_registration_ind
-            ORDER BY grouping = 'Unmapped' DESC, grouping, t.product_name
+            GROUP BY t.product_name, m.category, p.name, m.primary_registration_ind
+            ORDER BY category = 'Unmapped' DESC, category, t.product_name
         """, conn)
 
 
-def _save_mappings(original, edited):
+def _save_mappings(original, edited, program_code_map):
     changed = 0
     with db.get_connection() as conn:
         for old, new in zip(original.itertuples(index=False), edited.itertuples(index=False)):
-            if old.grouping == new.grouping and bool(old.primary_registration_ind) == bool(new.primary_registration_ind):
+            if (
+                old.category == new.category
+                and old.program == new.program
+                and bool(old.primary_registration_ind) == bool(new.primary_registration_ind)
+            ):
                 continue
-            if new.grouping == "Unmapped":
+
+            prog_code = program_code_map.get(new.program) if new.program != "None" else None
+
+            if new.category == "Unmapped":
                 conn.execute(
                     "DELETE FROM topscore_product_mappings WHERE product_name = ?",
                     (new.product_name,),
@@ -120,14 +136,16 @@ def _save_mappings(original, edited):
             else:
                 conn.execute("""
                     INSERT INTO topscore_product_mappings (
-                        product_name, grouping, primary_registration_ind
-                    ) VALUES (?, ?, ?)
+                        product_name, category, program_code, primary_registration_ind
+                    ) VALUES (?, ?, ?, ?)
                     ON CONFLICT(product_name) DO UPDATE SET
-                        grouping = excluded.grouping,
+                        category = excluded.category,
+                        program_code = excluded.program_code,
                         primary_registration_ind = excluded.primary_registration_ind
-                """, (new.product_name, new.grouping, int(bool(new.primary_registration_ind))))
+                """, (new.product_name, new.category, prog_code, int(bool(new.primary_registration_ind))))
             changed += 1
     return changed
+
 
 
 def _render_allocation_summary():
@@ -198,7 +216,11 @@ def render(read_only=False):
     st.subheader("Products")
     st.caption("Registration counts are distinct identifiers on positive payment rows. Amounts use the signed values supplied by TopScore.")
 
-    groupings = ["Unmapped"] + _load_groupings()
+    categories = ["Unmapped"] + _load_categories()
+    programs_raw = _load_programs()
+    program_options = ["None"] + [p[1] for p in programs_raw]
+    program_code_map = {p[1]: p[0] for p in programs_raw}
+
     editor_df = summary.copy()
     editor_df["primary_registration_ind"] = editor_df["primary_registration_ind"].astype(bool)
     edited_df = st.data_editor(
@@ -208,7 +230,8 @@ def render(read_only=False):
         disabled=read_only,
         column_config={
             "product_name": st.column_config.TextColumn("Product", disabled=True, width="large"),
-            "grouping": st.column_config.SelectboxColumn("Grouping", options=groupings, required=True),
+            "category": st.column_config.SelectboxColumn("Category", options=categories, required=True),
+            "program": st.column_config.SelectboxColumn("Program", options=program_options, required=False),
             "primary_registration_ind": st.column_config.CheckboxColumn("Primary registration product"),
             "registrations": st.column_config.NumberColumn("Registrations", format="%d", disabled=True),
             "gross_payments": st.column_config.NumberColumn("Gross payments", format="$%.2f", disabled=True),
@@ -219,28 +242,39 @@ def render(read_only=False):
             "net_dollars": st.column_config.NumberColumn("Net dollars", format="$%.2f", disabled=True),
         },
         column_order=[
-            "product_name", "grouping", "primary_registration_ind", "registrations",
+            "product_name", "category", "program", "primary_registration_ind", "registrations",
             "gross_payments", "refunds", "network_fees", "cc_fees", "topscore_fees", "net_dollars",
         ],
     )
 
-    unmapped_count = int((summary["grouping"] == "Unmapped").sum())
+    unmapped_count = int((summary["category"] == "Unmapped").sum())
     if unmapped_count:
-        st.warning(f"{unmapped_count:,} product(s) still need a grouping.")
+        st.warning(f"{unmapped_count:,} product(s) still need a category.")
     else:
-        st.success("Every product in the current export has a grouping.")
+        st.success("Every product in the current export has a category.")
     if st.button("Save product mappings", disabled=read_only):
         invalid_primary = edited_df[
-            (edited_df["grouping"] == "Unmapped")
+            (edited_df["category"] == "Unmapped")
             & edited_df["primary_registration_ind"]
         ]
         if not invalid_primary.empty:
-            st.error("Assign a grouping before marking a product as a primary registration product.")
+            st.error("Assign a category before marking a product as a primary registration product.")
             return
-        changed = _save_mappings(summary, edited_df)
+
+        missing_program = edited_df[
+            (edited_df["category"] == "Registration")
+            & (edited_df["program"].isin(["None", "", None]))
+        ]
+        if not missing_program.empty:
+            first_missing = missing_program.iloc[0]["product_name"]
+            st.error(f"A program must be selected for Registration products (e.g. '{first_missing}').")
+            return
+
+        changed = _save_mappings(summary, edited_df, program_code_map)
         if changed:
             st.success(f"Saved {changed:,} product mapping(s).")
             st.rerun()
         st.info("No mapping changes to save.")
 
     _render_allocation_summary()
+

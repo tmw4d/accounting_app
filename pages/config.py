@@ -1,12 +1,12 @@
 import streamlit as st
-from pages.config_pages import allocations, categories, fiscal_years, programs, registration_groupings
+from pages.config_pages import allocations, categories, fiscal_years, programs
 
 def render():
     st.title("System Configuration")
     
     # Simple navigation within the config section
     menu = st.radio("Select configuration module:",
-                    ["Categories", "Fiscal Years", "Programs", "Allocation Methods", "Registration Groupings"],
+                    ["Categories", "Fiscal Years", "Programs", "Allocation Methods"],
                     horizontal=True)
     
     st.divider()
@@ -19,5 +19,3 @@ def render():
         programs.render()
     elif menu == "Allocation Methods":
         allocations.render()
-    elif menu == "Registration Groupings":
-        registration_groupings.render()

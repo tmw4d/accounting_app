@@ -119,24 +119,7 @@ def render_topscore_player_counts():
         query = """
             WITH classified AS (
                 SELECT
-                    CASE
-                        WHEN m.grouping = 'Winter'
-                            OR (m.grouping = 'High School' AND t.product_name LIKE '%Winter%')
-                            THEN 'High School Winter'
-                        WHEN m.grouping = 'High School' AND t.product_name LIKE '%Fall%'
-                            THEN 'High School Fall'
-                        WHEN m.grouping = 'High School' AND t.product_name LIKE '%Spring%'
-                            THEN 'High School Spring'
-                        WHEN m.grouping = 'High School'
-                            THEN 'High School Other'
-                        WHEN m.grouping = 'Middle School' AND t.product_name LIKE '%Fall%'
-                            THEN 'Middle School Fall'
-                        WHEN m.grouping = 'Middle School' AND t.product_name LIKE '%Spring%'
-                            THEN 'Middle School Spring'
-                        WHEN m.grouping = 'Middle School'
-                            THEN 'Middle School Other'
-                        ELSE NULL
-                    END AS program_name,
+                    p.name AS program_name,
                     ifnull(m.primary_registration_ind, 0) AS primary_registration_ind,
                     t.identifier,
                     t.amount
@@ -144,12 +127,15 @@ def render_topscore_player_counts():
                 JOIN fy ON date(substr(t.transfer_timestamp, 1, 10)) BETWEEN fy.start_date AND fy.end_date
                 LEFT JOIN topscore_product_mappings m
                     ON t.product_name = m.product_name
+                LEFT JOIN programs p
+                    ON m.program_code = p.code
                 WHERE fy.fiscal_year_id = ?
                     AND lower(t.item_type) = 'payment'
                     AND lower(t.type) = 'payment'
                     AND t.amount > 0
-                    AND m.grouping IN ('High School', 'Middle School', 'Winter')
+                    AND m.category = 'Registration'
             )
+
             SELECT
                 program_name,
                 COUNT(*) AS registration_items,

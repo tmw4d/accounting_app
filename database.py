@@ -5,14 +5,6 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "ledger.db"
 
-REGISTRATION_ALLOCATION_PROGRAMS = (
-    "High School Fall",
-    "Middle School Fall",
-    "High School Spring",
-    "Middle School Spring",
-    "High School Winter",
-)
-
 
 def ensure_data_dir():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -20,7 +12,8 @@ def ensure_data_dir():
 
 def get_connection():
     ensure_data_dir()
-    return sqlite3.connect(DB_PATH)
+    return sqlite3.connect(DB_PATH, timeout=30.0)
+
 
 
 def recalculate_running_balances(conn):
@@ -191,29 +184,66 @@ def init_db():
             )
         """)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS registration_groupings (
-                name TEXT PRIMARY KEY
+            CREATE TABLE IF NOT EXISTS topscore_product_mappings (
+                product_name TEXT PRIMARY KEY,
+                category TEXT,
+                program_code TEXT,
+                primary_registration_ind INTEGER NOT NULL DEFAULT 0
+                    CHECK (primary_registration_ind IN (0, 1)),
+                FOREIGN KEY(program_code) REFERENCES programs(code)
             )
         """)
 
-        # Product mappings used to include accounting metadata. Registrations only
-        # needs a product, its grouping, and whether it is a primary registration.
+        # Migrate from the old grouping-based schema to category + program_code.
         mapping_columns = {
             row[1] for row in cursor.execute("PRAGMA table_info(topscore_product_mappings)").fetchall()
         }
-        expected_mapping_columns = {"product_name", "grouping", "primary_registration_ind"}
-        if mapping_columns and mapping_columns != expected_mapping_columns:
-            cursor.execute("ALTER TABLE topscore_product_mappings RENAME TO topscore_product_mappings_legacy")
+        if "grouping" in mapping_columns and "category" not in mapping_columns:
+            cursor.execute("ALTER TABLE topscore_product_mappings RENAME TO _pm_grouping_backup")
+            cursor.execute("""
+                CREATE TABLE topscore_product_mappings (
+                    product_name TEXT PRIMARY KEY,
+                    category TEXT,
+                    program_code TEXT,
+                    primary_registration_ind INTEGER NOT NULL DEFAULT 0
+                        CHECK (primary_registration_ind IN (0, 1)),
+                    FOREIGN KEY(program_code) REFERENCES programs(code)
+                )
+            """)
+            # Map old grouping values to income category names.
+            cursor.execute("""
+                INSERT INTO topscore_product_mappings (
+                    product_name, category, program_code, primary_registration_ind
+                )
+                SELECT
+                    product_name,
+                    CASE grouping
+                        WHEN 'High School' THEN 'Registration'
+                        WHEN 'Middle School' THEN 'Registration'
+                        WHEN 'Winter' THEN 'Registration'
+                        WHEN 'Merchandise' THEN 'Merchandise Sales'
+                        WHEN 'Tournament Bids' THEN 'YULA Invite Bids'
+                        WHEN 'Donation' THEN 'Donation'
+                        WHEN 'Fundraising' THEN 'Fundraising'
+                        WHEN 'Other' THEN 'Other Income'
+                        ELSE grouping
+                    END,
+                    CASE
+                        WHEN grouping = 'Winter' THEN 'HS02'
+                        WHEN grouping = 'High School' AND product_name LIKE '%Fall%' THEN 'HS01'
+                        WHEN grouping = 'High School' AND product_name LIKE '%Spring%' THEN 'HS03'
+                        WHEN grouping = 'High School' AND product_name LIKE '%Winter%' THEN 'HS02'
+                        WHEN grouping = 'Middle School' AND product_name LIKE '%Fall%' THEN 'MS01'
+                        WHEN grouping = 'Middle School' AND product_name LIKE '%Spring%' THEN 'MS02'
+                        ELSE NULL
+                    END,
+                    COALESCE(primary_registration_ind, 0)
+                FROM _pm_grouping_backup
+                WHERE product_name IS NOT NULL AND trim(product_name) != ''
+            """)
+            cursor.execute("DROP TABLE _pm_grouping_backup")
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS topscore_product_mappings (
-                product_name TEXT PRIMARY KEY,
-                grouping TEXT NOT NULL,
-                primary_registration_ind INTEGER NOT NULL DEFAULT 0
-                    CHECK (primary_registration_ind IN (0, 1))
-            )
-        """)
-
+        # Also handle the older legacy table from a prior migration.
         legacy_table = cursor.execute("""
             SELECT 1
             FROM sqlite_master
@@ -223,39 +253,35 @@ def init_db():
             legacy_columns = {
                 row[1] for row in cursor.execute("PRAGMA table_info(topscore_product_mappings_legacy)").fetchall()
             }
-            primary_column = "primary_registration_ind" if "primary_registration_ind" in legacy_columns else "0"
-            cursor.execute(f"""
-                INSERT OR REPLACE INTO topscore_product_mappings (
-                    product_name, grouping, primary_registration_ind
-                )
-                SELECT product_name, grouping, COALESCE({primary_column}, 0)
-                FROM topscore_product_mappings_legacy
-                WHERE product_name IS NOT NULL
-                    AND trim(product_name) != ''
-                    AND grouping IS NOT NULL
-                    AND trim(grouping) != ''
-            """)
+            primary_col = "primary_registration_ind" if "primary_registration_ind" in legacy_columns else "0"
+            has_grouping = "grouping" in legacy_columns
+            if has_grouping:
+                cursor.execute(f"""
+                    INSERT OR IGNORE INTO topscore_product_mappings (
+                        product_name, category, primary_registration_ind
+                    )
+                    SELECT
+                        product_name,
+                        CASE grouping
+                            WHEN 'High School' THEN 'Registration'
+                            WHEN 'Middle School' THEN 'Registration'
+                            WHEN 'Winter' THEN 'Registration'
+                            WHEN 'Merchandise' THEN 'Merchandise Sales'
+                            WHEN 'Tournament Bids' THEN 'YULA Invite Bids'
+                            WHEN 'Donation' THEN 'Donation'
+                            WHEN 'Fundraising' THEN 'Fundraising'
+                            WHEN 'Other' THEN 'Other Income'
+                            ELSE grouping
+                        END,
+                        COALESCE({primary_col}, 0)
+                    FROM topscore_product_mappings_legacy
+                    WHERE product_name IS NOT NULL AND trim(product_name) != ''
+                """)
             cursor.execute("DROP TABLE topscore_product_mappings_legacy")
 
-        cursor.executemany(
-            "INSERT OR IGNORE INTO registration_groupings (name) VALUES (?)",
-            [
-                ("High School",),
-                ("Middle School",),
-                ("Winter",),
-                ("Donation",),
-                ("Fundraising",),
-                ("Merchandise",),
-                ("Tournament Bids",),
-                ("Other",),
-            ],
-        )
-        cursor.execute("""
-            INSERT OR IGNORE INTO registration_groupings (name)
-            SELECT DISTINCT grouping
-            FROM topscore_product_mappings
-            WHERE trim(grouping) != ''
-        """)
+        # Drop the obsolete registration_groupings table if it exists.
+        cursor.execute("DROP TABLE IF EXISTS registration_groupings")
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS topscore_transfer_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -330,100 +356,50 @@ def init_db():
                     'FY' || strftime(
                         '%Y', date(t.transfer_timestamp, '+6 month', 'start of year')
                     ) AS fy,
-                    SUM(CASE
-                        WHEN m.grouping = 'High School'
-                            AND strftime('%m', date(t.transfer_timestamp)) > '06'
-                            AND lower(t.item_type) = 'payment'
-                        THEN m.primary_registration_ind ELSE 0
-                    END) AS hs_fall_players,
-                    SUM(CASE
-                        WHEN m.grouping = 'Winter'
-                            AND lower(t.item_type) = 'payment'
-                        THEN 1 ELSE 0
-                    END) AS winter_players,
-                    SUM(CASE
-                        WHEN m.grouping = 'High School'
-                            AND strftime('%m', date(t.transfer_timestamp)) <= '06'
-                            AND lower(t.item_type) = 'payment'
-                        THEN m.primary_registration_ind ELSE 0
-                    END) AS hs_spring_players,
-                    SUM(CASE
-                        WHEN m.grouping = 'Middle School'
-                            AND strftime('%m', date(t.transfer_timestamp)) > '06'
-                            AND lower(t.item_type) = 'payment'
-                        THEN m.primary_registration_ind ELSE 0
-                    END) AS ms_fall_players,
-                    SUM(CASE
-                        WHEN m.grouping = 'Middle School'
-                            AND strftime('%m', date(t.transfer_timestamp)) <= '06'
-                            AND lower(t.item_type) = 'payment'
-                        THEN m.primary_registration_ind ELSE 0
-                    END) AS ms_spring_players,
+                    m.program_code,
                     SUM(CASE
                         WHEN lower(t.item_type) = 'payment'
-                            AND m.grouping IN ('High School', 'Winter', 'Middle School')
                         THEN m.primary_registration_ind ELSE 0
-                    END) AS total_players,
-                    SUM(CASE
-                        WHEN m.grouping = 'High School'
-                            AND strftime('%m', date(t.transfer_timestamp)) > '06'
-                        THEN t.amount ELSE 0
-                    END) AS hs_fall_dollars,
-                    SUM(CASE WHEN m.grouping = 'Winter' THEN t.amount ELSE 0 END) AS winter_dollars,
-                    SUM(CASE
-                        WHEN m.grouping = 'High School'
-                            AND strftime('%m', date(t.transfer_timestamp)) <= '06'
-                        THEN t.amount ELSE 0
-                    END) AS hs_spring_dollars,
-                    SUM(CASE
-                        WHEN m.grouping = 'Middle School'
-                            AND strftime('%m', date(t.transfer_timestamp)) > '06'
-                        THEN t.amount ELSE 0
-                    END) AS ms_fall_dollars,
-                    SUM(CASE
-                        WHEN m.grouping = 'Middle School'
-                            AND strftime('%m', date(t.transfer_timestamp)) <= '06'
-                        THEN t.amount ELSE 0
-                    END) AS ms_spring_dollars,
-                    SUM(CASE
-                        WHEN m.grouping IN ('High School', 'Winter', 'Middle School')
-                        THEN t.amount ELSE 0
-                    END) AS program_dollars
+                    END) AS players,
+                    SUM(t.amount) AS dollars
                 FROM topscore_transfer_items t
                 JOIN topscore_product_mappings m ON m.product_name = t.product_name
-                WHERE date(t.transfer_timestamp) IS NOT NULL
-                GROUP BY 1
+                WHERE m.program_code IS NOT NULL
+                    AND date(t.transfer_timestamp) IS NOT NULL
+                GROUP BY 1, 2
+            ),
+            fy_totals AS (
+                SELECT
+                    fy,
+                    SUM(players) AS total_players,
+                    SUM(dollars) AS total_dollars
+                FROM yearly_summary
+                GROUP BY fy
             )
             SELECT
-                *,
-                hs_fall_players / CAST(NULLIF(total_players, 0) AS REAL) AS hs_fall_player_pct,
-                winter_players / CAST(NULLIF(total_players, 0) AS REAL) AS winter_player_pct,
-                hs_spring_players / CAST(NULLIF(total_players, 0) AS REAL) AS hs_spring_player_pct,
-                ms_fall_players / CAST(NULLIF(total_players, 0) AS REAL) AS ms_fall_player_pct,
-                ms_spring_players / CAST(NULLIF(total_players, 0) AS REAL) AS ms_spring_player_pct,
-                hs_fall_dollars / CAST(NULLIF(program_dollars, 0) AS REAL) AS hs_fall_dollar_pct,
-                winter_dollars / CAST(NULLIF(program_dollars, 0) AS REAL) AS winter_dollar_pct,
-                hs_spring_dollars / CAST(NULLIF(program_dollars, 0) AS REAL) AS hs_spring_dollar_pct,
-                ms_fall_dollars / CAST(NULLIF(program_dollars, 0) AS REAL) AS ms_fall_dollar_pct,
-                ms_spring_dollars / CAST(NULLIF(program_dollars, 0) AS REAL) AS ms_spring_dollar_pct
-            FROM yearly_summary
+                ys.fy,
+                ys.program_code,
+                ys.players,
+                ys.dollars,
+                ys.players / CAST(NULLIF(ft.total_players, 0) AS REAL) AS player_pct,
+                ys.dollars / CAST(NULLIF(ft.total_dollars, 0) AS REAL) AS dollar_pct
+            FROM yearly_summary ys
+            JOIN fy_totals ft ON ft.fy = ys.fy
         """)
         cursor.execute("""
             CREATE VIEW registration_allocation_rules_v AS
-            WITH rule_values(fy, method_id, program_code, percentage) AS (
-                SELECT fy, 21, 'HS01', hs_fall_player_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 21, 'HS02', winter_player_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 21, 'HS03', hs_spring_player_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 21, 'MS01', ms_fall_player_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 21, 'MS02', ms_spring_player_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 22, 'HS01', hs_fall_dollar_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 22, 'HS02', winter_dollar_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 22, 'HS03', hs_spring_dollar_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 22, 'MS01', ms_fall_dollar_pct FROM program_registration_summary
-                UNION ALL SELECT fy, 22, 'MS02', ms_spring_dollar_pct FROM program_registration_summary
-            )
-            SELECT f.fiscal_year_id, rv.method_id, p.id AS program_id, rv.percentage
-            FROM rule_values rv
+            SELECT
+                f.fiscal_year_id,
+                rv.method_id,
+                p.id AS program_id,
+                rv.percentage
+            FROM (
+                SELECT fy, 21 AS method_id, program_code, player_pct AS percentage
+                FROM program_registration_summary
+                UNION ALL
+                SELECT fy, 22 AS method_id, program_code, dollar_pct AS percentage
+                FROM program_registration_summary
+            ) rv
             JOIN fy f ON f.name = rv.fy
             JOIN programs p ON p.code = rv.program_code
             WHERE rv.percentage IS NOT NULL
@@ -442,40 +418,21 @@ def init_db():
 
 
 def _registration_distribution_rows(conn):
-    """Return net TopScore dollars by independent July-June allocation year and program."""
+    """Return net TopScore dollars by fiscal-year allocation year and program."""
     return conn.execute("""
-        WITH eligible_items AS (
-            SELECT
-                CASE
-                    WHEN m.grouping = 'Winter' THEN CAST(strftime(
-                        '%Y', date(substr(t.transfer_timestamp, 1, 10), '+6 months')
-                    ) AS INTEGER)
-                    WHEN CAST(strftime('%m', substr(t.transfer_timestamp, 1, 10)) AS INTEGER) > 6
-                        THEN CAST(strftime('%Y', substr(t.transfer_timestamp, 1, 10)) AS INTEGER) + 1
-                    ELSE CAST(strftime('%Y', substr(t.transfer_timestamp, 1, 10)) AS INTEGER)
-                END AS allocation_year,
-                CASE
-                    WHEN m.grouping = 'Winter' THEN 'High School Winter'
-                    WHEN m.grouping = 'High School'
-                        AND CAST(strftime('%m', substr(t.transfer_timestamp, 1, 10)) AS INTEGER) > 6
-                        THEN 'High School Fall'
-                    WHEN m.grouping = 'High School' THEN 'High School Spring'
-                    WHEN m.grouping = 'Middle School'
-                        AND CAST(strftime('%m', substr(t.transfer_timestamp, 1, 10)) AS INTEGER) > 6
-                        THEN 'Middle School Fall'
-                    WHEN m.grouping = 'Middle School' THEN 'Middle School Spring'
-                END AS program_name,
-                t.amount
-            FROM topscore_transfer_items t
-            JOIN topscore_product_mappings m ON m.product_name = t.product_name
-            WHERE m.grouping IN ('High School', 'Middle School', 'Winter')
-                AND date(substr(t.transfer_timestamp, 1, 10)) IS NOT NULL
-        )
-        SELECT allocation_year, program_name, ROUND(SUM(amount), 2) AS net_dollars
-        FROM eligible_items
-        WHERE allocation_year IS NOT NULL AND program_name IS NOT NULL
-        GROUP BY allocation_year, program_name
-        ORDER BY allocation_year, program_name
+        SELECT
+            CAST(strftime(
+                '%Y', date(substr(t.transfer_timestamp, 1, 10), '+6 months')
+            ) AS INTEGER) AS allocation_year,
+            p.name AS program_name,
+            ROUND(SUM(t.amount), 2) AS net_dollars
+        FROM topscore_transfer_items t
+        JOIN topscore_product_mappings m ON m.product_name = t.product_name
+        JOIN programs p ON p.code = m.program_code
+        WHERE m.program_code IS NOT NULL
+            AND date(substr(t.transfer_timestamp, 1, 10)) IS NOT NULL
+        GROUP BY allocation_year, p.name
+        ORDER BY allocation_year, p.name
     """).fetchall()
 
 
@@ -484,6 +441,13 @@ def get_registration_allocation_summary(conn=None):
     owns_connection = conn is None
     active_conn = conn or get_connection()
     try:
+        # Get program names from the programs table for consistent ordering.
+        program_names = [
+            row[0] for row in active_conn.execute(
+                "SELECT name FROM programs WHERE active_ind = 1 ORDER BY code"
+            ).fetchall()
+        ]
+
         grouped = {}
         for allocation_year, program_name, net_dollars in _registration_distribution_rows(active_conn):
             grouped.setdefault(int(allocation_year), {})[program_name] = float(net_dollars or 0)
@@ -493,7 +457,7 @@ def get_registration_allocation_summary(conn=None):
             total_net = sum(amounts.values())
             if abs(total_net) < 0.005:
                 continue
-            for program_name in REGISTRATION_ALLOCATION_PROGRAMS:
+            for program_name in program_names:
                 net_dollars = amounts.get(program_name, 0.0)
                 summary.append({
                     "allocation_year": allocation_year,
@@ -505,6 +469,7 @@ def get_registration_allocation_summary(conn=None):
     finally:
         if owns_connection:
             active_conn.close()
+
 
 
 def get_program_financial_breakdown(fy_id, conn=None):
@@ -588,5 +553,93 @@ def get_program_financial_breakdown(fy_id, conn=None):
     finally:
         if owns_connection:
             active_conn.close()
+
+
+def get_fiscal_year_summary(fy_id, conn=None):
+    """Return (initial_balance, latest_posted_balance, pending_sum, total_balance) for a fiscal year.
+
+    Calculates sequential running balances ordered by fiscal year sequence, correctly handling:
+    - Initial balance carried forward from prior fiscal years
+    - Latest posted balance (excluding pending transactions)
+    - Pending transactions total
+    - Projected total balance (including pending transactions)
+    """
+    def as_float(value):
+        return float(value) if value is not None else 0.0
+
+    owns_connection = conn is None
+    active_conn = conn or get_connection()
+    try:
+        recalculate_running_balances(active_conn)
+
+        first_txn = active_conn.execute("""
+            SELECT l.amount, l.running_balance
+            FROM ledger l
+            WHERE l.fiscal_year_id = ?
+            AND l.is_deleted = 0
+            ORDER BY 
+                CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END ASC,
+                l.transaction_date ASC,
+                l.id ASC
+            LIMIT 1
+        """, (fy_id,)).fetchone()
+
+        if first_txn and first_txn[1] is not None:
+            initial_balance_val = as_float(first_txn[1]) - as_float(first_txn[0])
+        else:
+            prior_txn = active_conn.execute("""
+                SELECT l.running_balance
+                FROM ledger l
+                JOIN fy ON l.fiscal_year_id = fy.fiscal_year_id
+                WHERE fy.start_date < (SELECT start_date FROM fy WHERE fiscal_year_id = ?)
+                AND l.is_deleted = 0
+                ORDER BY 
+                    fy.start_date DESC,
+                    CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END DESC,
+                    l.transaction_date DESC,
+                    l.id DESC
+                LIMIT 1
+            """, (fy_id,)).fetchone()
+            initial_balance_val = as_float(prior_txn[0]) if prior_txn else 0.0
+
+        latest_posted = active_conn.execute("""
+            SELECT running_balance 
+            FROM ledger 
+            WHERE transaction_date != 'pending' 
+            AND fiscal_year_id = ?
+            AND is_deleted = 0
+            ORDER BY transaction_date DESC, id DESC
+            LIMIT 1
+        """, (fy_id,)).fetchone()
+
+        pending_sum = active_conn.execute("""
+            SELECT SUM(amount) 
+            FROM ledger 
+            WHERE transaction_date = 'pending'
+            AND fiscal_year_id = ?
+            AND is_deleted = 0
+        """, (fy_id,)).fetchone()
+
+        last_txn = active_conn.execute("""
+            SELECT running_balance
+            FROM ledger
+            WHERE fiscal_year_id = ?
+            AND is_deleted = 0
+            ORDER BY 
+                CASE WHEN transaction_date = 'pending' THEN 1 ELSE 0 END DESC,
+                transaction_date DESC,
+                id DESC
+            LIMIT 1
+        """, (fy_id,)).fetchone()
+
+        latest_posted_val = as_float(latest_posted[0]) if latest_posted else initial_balance_val
+        pending_sum_val = as_float(pending_sum[0]) if (pending_sum and pending_sum[0] is not None) else 0.0
+        total_balance = as_float(last_txn[0]) if (last_txn and last_txn[0] is not None) else (latest_posted_val + pending_sum_val)
+
+        return initial_balance_val, latest_posted_val, pending_sum_val, total_balance
+    finally:
+        if owns_connection:
+            active_conn.close()
+
 
 

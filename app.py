@@ -125,78 +125,8 @@ def fiscal_year_selector():
 
 
 def get_dashboard_summary():
-    def as_float(value):
-        return float(value) if value is not None else 0.0
+    return db.get_fiscal_year_summary(st.session_state.selected_fy)
 
-    fy_id = st.session_state.selected_fy
-    with db.get_connection() as conn:
-        db.recalculate_running_balances(conn)
-
-        first_txn = conn.execute("""
-            SELECT l.amount, l.running_balance
-            FROM ledger l
-            WHERE l.fiscal_year_id = ?
-            AND l.is_deleted = 0
-            ORDER BY 
-                CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END ASC,
-                l.transaction_date ASC,
-                l.id ASC
-            LIMIT 1
-        """, (fy_id,)).fetchone()
-
-        if first_txn and first_txn[1] is not None:
-            initial_balance_val = as_float(first_txn[1]) - as_float(first_txn[0])
-        else:
-            prior_txn = conn.execute("""
-                SELECT l.running_balance
-                FROM ledger l
-                JOIN fy ON l.fiscal_year_id = fy.fiscal_year_id
-                WHERE fy.start_date < (SELECT start_date FROM fy WHERE fiscal_year_id = ?)
-                AND l.is_deleted = 0
-                ORDER BY 
-                    fy.start_date DESC,
-                    CASE WHEN l.transaction_date = 'pending' THEN 1 ELSE 0 END DESC,
-                    l.transaction_date DESC,
-                    l.id DESC
-                LIMIT 1
-            """, (fy_id,)).fetchone()
-            initial_balance_val = as_float(prior_txn[0]) if prior_txn else 0.0
-
-        latest_posted = conn.execute("""
-            SELECT running_balance 
-            FROM ledger 
-            WHERE transaction_date != 'pending' 
-            AND fiscal_year_id = ?
-            AND is_deleted = 0
-            ORDER BY transaction_date DESC, id DESC
-            LIMIT 1
-        """, (fy_id,)).fetchone()
-        
-        pending_sum = conn.execute("""
-            SELECT SUM(amount) 
-            FROM ledger 
-            WHERE transaction_date = 'pending'
-            AND fiscal_year_id = ?
-            AND is_deleted = 0
-        """, (fy_id,)).fetchone()
-
-        last_txn = conn.execute("""
-            SELECT running_balance
-            FROM ledger
-            WHERE fiscal_year_id = ?
-            AND is_deleted = 0
-            ORDER BY 
-                CASE WHEN transaction_date = 'pending' THEN 1 ELSE 0 END DESC,
-                transaction_date DESC,
-                id DESC
-            LIMIT 1
-        """, (fy_id,)).fetchone()
-
-        latest_posted_val = as_float(latest_posted[0]) if latest_posted else initial_balance_val
-        pending_sum_val = as_float(pending_sum[0]) if pending_sum else 0.0
-        total_balance = as_float(last_txn[0]) if (last_txn and last_txn[0] is not None) else (latest_posted_val + pending_sum_val)
-        
-        return initial_balance_val, latest_posted_val, pending_sum_val, total_balance
 
 
 def get_dashboard_data_through_dates():

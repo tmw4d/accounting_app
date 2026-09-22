@@ -197,7 +197,18 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
             active_count = conn.execute("SELECT COUNT(*), COUNT(running_balance) FROM ledger WHERE is_deleted = 0").fetchone()
             self.assertEqual(active_count[0], active_count[1], "Expected all active rows to have calculated running_balance")
 
+    def test_fiscal_year_summary_consistency(self):
+        from pages import reports
+        with db.get_connection() as conn:
+            fys = conn.execute("SELECT fiscal_year_id FROM fy ORDER BY start_date").fetchall()
+        for (fy_id,) in fys:
+            db_summary = db.get_fiscal_year_summary(fy_id)
+            report_summary = reports._get_summary(fy_id)
+            self.assertEqual(len(db_summary), 4)
+            self.assertEqual(db_summary, report_summary, f"Mismatch in summary metrics for FY {fy_id}")
+
 
 if __name__ == "__main__":
+
     unittest.main()
 

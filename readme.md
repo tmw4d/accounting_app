@@ -48,3 +48,8 @@ Launch the application locally using Streamlit:
 
 ```bash
 streamlit run app.py
+```
+or, if you haven't activated the venv:
+```bash
+.venv/Scripts/python.exe -m streamlit run app.py
+```
