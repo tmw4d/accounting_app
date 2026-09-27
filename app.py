@@ -27,11 +27,14 @@ def check_auth_and_permissions():
     if not hasattr(st, "user") or not st.user.is_logged_in:
         st.title("🔐 Authentication Required")
         st.write("Please log in with your Google account to access the Accounting System.")
-        if hasattr(st, "login") and "auth" in st.secrets and "google" in st.secrets.auth:
-            st.button("Log in with Google", on_click=st.login("google"))
+        if hasattr(st, "login"):
+            if "auth" in st.secrets and "google" in st.secrets.auth:
+                st.button("Log in with Google", on_click=st.login("google"))
+            else:
+                # Fallback for Community Cloud default injection
+                st.button("Log in with Google", on_click=st.login)
         else:
-            # Fallback for Community Cloud default injection
-            st.button("Log in with Google", on_click=st.login)
+            st.button("Log in with Google")
 #        if hasattr(st, "login"):
 #            st.button("Log in with Google", on_click=st.login("google"))
 #        else:
@@ -157,6 +160,30 @@ def format_data_through_date(value):
     return f"{parsed_date.strftime('%b')} {parsed_date.day}, {parsed_date.year}"
 
 
+def get_nav_options(read_only=None):
+    """Return navigation options depending on read-only status."""
+    if read_only is None:
+        read_only = is_read_only()
+    if read_only:
+        return [
+            "Dashboard",
+            "Transactions",
+            "Reports",
+            "Cloud Sync",
+        ]
+    return [
+        "Dashboard",
+        "Transactions",
+        "Reports",
+        "Cloud Sync",
+        "Reconcile Transactions",
+        "Manual Entry",
+        "Import Bank Files",
+        "Registrations",
+        "Configuration",
+    ]
+
+
 def main():
     st.set_page_config(page_title="Accounting System", layout="wide")
 
@@ -193,26 +220,10 @@ def main():
 
     if is_read_only():
         st.sidebar.info("🔒 Read-Only Mode")
-        nav_options = [
-            "Dashboard",
-            "Registrations",
-            "Transactions",
-            "Reports",
-            "Cloud Sync",
-        ]
     else:
         st.sidebar.success("✏️ Admin Access")
-        nav_options = [
-            "Dashboard", 
-            "Registrations",
-            "Transactions",
-            "Reports",
-            "Cloud Sync",
-            "Reconcile Transactions", 
-            "Manual Entry", 
-            "Import Bank Files", 
-            "Configuration"
-        ]
+
+    nav_options = get_nav_options()
 
     if st.sidebar.button("Log out"):
         st.logout()

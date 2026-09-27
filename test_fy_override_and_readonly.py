@@ -207,6 +207,23 @@ class TestFYOverrideAndReadOnly(unittest.TestCase):
             self.assertEqual(len(db_summary), 4)
             self.assertEqual(db_summary, report_summary, f"Mismatch in summary metrics for FY {fy_id}")
 
+    def test_nav_options_read_only_and_admin(self):
+        # 1. Read-only options: Registrations must NOT be present
+        ro_options = app.get_nav_options(read_only=True)
+        self.assertNotIn("Registrations", ro_options)
+        self.assertEqual(ro_options, ["Dashboard", "Transactions", "Reports", "Cloud Sync"])
+
+        # 2. Admin options: Registrations must be right before Configuration and after Import Bank Files
+        admin_options = app.get_nav_options(read_only=False)
+        self.assertIn("Registrations", admin_options)
+        self.assertEqual(admin_options[-2], "Registrations")
+        self.assertEqual(admin_options[-1], "Configuration")
+        bank_files_idx = admin_options.index("Import Bank Files")
+        reg_idx = admin_options.index("Registrations")
+        config_idx = admin_options.index("Configuration")
+        self.assertEqual(reg_idx, bank_files_idx + 1)
+        self.assertEqual(config_idx, reg_idx + 1)
+
 
 if __name__ == "__main__":
 
